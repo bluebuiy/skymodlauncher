@@ -6,7 +6,7 @@ Right now, the only officially supported distribution is the GOG Offline version
 
 # How to Use
 ## Building
-Download the source, either from github, or from the zip here, configure with cmake, and build.  I will not provide prebuilt binaries.  The code here is not guaranteed to be the latest release.
+Download the source, configure with cmake, and build.
 For example, using the supplied presets:
 
     cmake --preset ninja-release
