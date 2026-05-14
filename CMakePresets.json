@@ -1,0 +1,37 @@
+{
+    "version": 3,
+    "configurePresets": [
+        {
+            "name": "ninja-release",
+            "displayName": "Ninja Release",
+            "binaryDir": "${sourceDir}/out/ninja-release",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Release",
+                "CMAKE_HIP_HOST_COMPILER": "clang"
+            }
+        },
+        {
+            "name": "ninja-debug",
+            "displayName": "Ninja Debug",
+            "binaryDir": "${sourceDir}/out/ninja-debug",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_HIP_HOST_COMPILER": "clang"
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "Release",
+            "displayName": "Release",
+            "configurePreset": "ninja-release",
+            "targets": "skymodlaunch"
+        },
+        {
+            "name": "Debug",
+            "displayName": "Debug",
+            "configurePreset": "ninja-debug",
+            "targets": "skymodlaunch"
+        }
+    ]
+}
