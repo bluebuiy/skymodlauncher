@@ -346,27 +346,26 @@ void RenderModMgr(ModMgr& mgr)
         for (int i = 0; i < mgr.inst.mods.size(); ++i)
         {
             ImGui::PushID(mgr.inst.mods[i].modFile.c_str());
-                ImGui::Text("%s", mgr.inst.mods[i].modFile.c_str());
-                ImGui::SameLine();
-                ImGui::Text(" %d ", mgr.inst.mods[i].loadIndex);
+                ImGui::Text(" %3d ", mgr.inst.mods[i].loadIndex);
                 ImGui::SameLine();
                 ImGui::Checkbox(" ", &mgr.inst.mods[i].enabled);
                 ImGui::SameLine();
-                ImGui::Text("    ");
-                ImGui::SameLine();
                 ImGui::BeginDisabled(mgr.inst.mods[i].loadIndex == 0);
-                if (ImGui::Button("Up"))
+                if (ImGui::Button("^"))
                 {
                     mvUp = i;
                 }
                 ImGui::EndDisabled();
                 ImGui::SameLine();
                 ImGui::BeginDisabled(mgr.inst.mods[i].loadIndex == mgr.inst.mods.size() - 1);
-                if (ImGui::Button("Down"))
+                if (ImGui::Button("V"))
                 {
                     mvDown = i;
                 }
                 ImGui::EndDisabled();
+                ImGui::SameLine();
+                
+                ImGui::Text("%-32s", mgr.inst.mods[i].modFile.c_str());
                 if (mgr.enableRemove)
                 {
                     ImGui::SameLine();
