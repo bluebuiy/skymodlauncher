@@ -2,6 +2,7 @@
 
 #include "imgui.h"
 #include "modmgr.h"
+#include "prochelper.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <iostream>
@@ -20,8 +21,8 @@ void printHelp()
     std::cout << "  -d path         specify the directory to use\n";
     std::cout << "  -c path         specify a specific configuration file to use\n";
     std::cout << "  -s              verbose\n";
-    //std::cout << "  -e exec         invoke a preconfigure executable in the injected filesystem\n";
-    //std::cout << "  -x exec         invoke exec in a shell, inside the injected filesystem\n";
+    std::cout << "  -e exec         invoke a preconfigured executable in the injected filesystem\n";
+    std::cout << "  -x exec         invoke exec in a shell, inside the injected filesystem\n";
     std::cout << std::endl;
 }
 
@@ -33,15 +34,17 @@ int main(int argc, char** argv)
     std::string configPath;
     std::string initDir;
     std::string immediateExec;
+    std::string shArgs;
     bool initDirFlag = false;
     bool initConfigFlag = false;
     bool verbose = true;
     bool execArgs = false;
     bool execProg = false;
+    bool invokedRaw = true;
 
     int opt = 0;
 
-    while ((opt = getopt(argc, argv, "d:c:p:e:sx?h")) != -1)
+    while ((opt = getopt(argc, argv, "d:c:p:e:x:s?hr")) != -1)
     {
         switch (opt)
         {
@@ -70,6 +73,7 @@ int main(int argc, char** argv)
             }
             case 'x':
             {
+                shArgs = optarg;
                 execArgs = true;
                 break;
             }
@@ -78,6 +82,12 @@ int main(int argc, char** argv)
             {
                 printHelp();
                 exit(0);
+                break;
+            }
+            case 'r':
+            {
+                std::cout << "-r!" << std::endl;
+                invokedRaw = false;
                 break;
             }
             default:
@@ -101,7 +111,7 @@ int main(int argc, char** argv)
         return 1;
     }
 
-    if (!initConfigFlag && !initConfigFlag)
+    if (!initDirFlag && !initConfigFlag)
     {
         configPath = "./config.json";
         std::cout << "Initializing in current directory" << std::endl;
@@ -117,20 +127,83 @@ int main(int argc, char** argv)
 
     config.verbose = verbose;
 
-    if (!configPath.empty() && !LoadModMgr(config, configPath))
+    bool loadExisting = execArgs || execProg;
+
+    if (!configPath.empty() && !LoadModMgr(config, configPath, !loadExisting))
     {
         std::cout << "Failed to load config" << std::endl;
         return 1;
     }
 
-    if (!immediateExec.empty())
+    std::cout << "--------------" << std::endl;
+    if (execArgs)
     {
-        std::cout << "Executing " << immediateExec << std::endl;
+        if (!shArgs.empty())
+        {
+            std::cout << "Executing " << immediateExec << std::endl;
 
-        return 0;
+            if (invokedRaw)
+            {
+                std::string confPath;
+                if (auto o = WordExpand(shellFix(config.config.configPath)))
+                {
+                    confPath = *o;
+                }
+                else
+                {
+                    std::cout << "Failed to resolve config path" << std::endl;
+                    return 1;
+                }
+                std::vector<std::string> launchArgs = {"-c", confPath, "-x", shArgs};
+                ExecToolProgram ex;
+                ex.args = launchArgs;
+                ForkInvoke(&ex);
+            }
+            else
+            {
+                auto cmd = ShellSplit(shArgs);
+                InvokeProcess(config, cmd);
+            }
+
+            return 0;
+        }
+        else
+        {
+            std::cout << "No command! doing nothing." << std::endl;
+            return 0;
+        }
     }
 
-
+    if (execProg)
+    {
+        if (invokedRaw)
+        {
+            std::string confPath;
+            if (auto o = WordExpand(shellFix(config.config.configPath)))
+            {
+                confPath = *o;
+            }
+            else
+            {
+                std::cout << "Failed to resolve config path" << std::endl;
+                return 1;
+            }
+            std::vector<std::string> launchArgs = {"-c", confPath, "-e", immediateExec};
+            ExecToolProgram ex;
+            ex.args = launchArgs;
+            ForkInvoke(&ex);
+        }
+        else
+        {
+            // envornment already set up
+            std::cout << "Executing tool " << immediateExec << std::endl;
+            if (!immediateExec.empty())
+            {
+                InvokeTool(config, immediateExec);
+                return 0;
+            }
+        }
+    }
 
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit())

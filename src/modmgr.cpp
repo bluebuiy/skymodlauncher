@@ -17,38 +17,6 @@
 //}
 
 
-std::string shellFix(std::string const & s)
-{
-    std::string ret;
-    for (int i = 0; i < s.size(); ++i)
-    {
-        if (s[i] == ' ')
-        {
-            ret.push_back('\\');
-        }
-        ret.push_back(s[i]);
-    }
-    return ret;
-}
-
-std::string mfix(std::string const & s)
-{
-    auto b = WordExpand(shellFix(s));
-    if (b)
-    {
-        return shellFix(*b);
-    }
-    return shellFix(s);
-}
-
-void removecrlf(std::string & str)
-{
-    auto end = std::remove_if(str.begin(), str.end(), [](char c){
-        return c == '\r' || c == '\n';
-    });
-    str.erase(end, str.end());
-}
-
 bool WritePluginsTxt(ModMgr& mgr, std::filesystem::path const & path)
 {
     std::ofstream stream(path);
@@ -77,6 +45,7 @@ bool WritePluginsTxt(ModMgr& mgr, std::filesystem::path const & path)
 
 void LaunchSKSE(ModMgr& mgr)
 {
+#if 0
     std::string lowerLayers;
     std::sort(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](auto& a, auto& b){ return a.loadIndex < b.loadIndex; });
     auto p = std::filesystem::path(mgr.config.modFolder);
@@ -136,7 +105,40 @@ void LaunchSKSE(ModMgr& mgr)
     {
         std::cout << "Failed to launch" << std::endl;
     }
+#else
+    std::string confPath;
+    if (auto o = WordExpand(shellFix(mgr.config.configPath)))
+    {
+        confPath = *o;
+    }
+    else
+    {
+        std::cout << "Failed to resolve config path" << std::endl;
+        return;
+    }
+    std::vector<std::string> launchArgs = {"-c", confPath, "-e", "skse"};
+    ExecToolProgram ex;
+    ex.args = launchArgs;
+    ForkInvoke(&ex);
+#endif
+}
 
+void LaunchShell(ModMgr& mgr)
+{
+    std::string confPath;
+    if (auto o = WordExpand(shellFix(mgr.config.configPath)))
+    {
+        confPath = *o;
+    }
+    else
+    {
+        std::cout << "Failed to resolve config path" << std::endl;
+        return;
+    }
+    std::vector<std::string> launchArgs = {"-c", confPath, "-x", "/usr/bin/ls -al /home/max/.wine/drive_c/GOG\\ Games/Skyrim\\ Anniversary\\ Edition/"};
+    ExecToolProgram ex;
+    ex.args = launchArgs;
+    ForkInvoke(&ex);
 }
 
 void RenderNewModDialog(ModMgr& mgr)
@@ -301,6 +303,11 @@ void RenderModMgr(ModMgr& mgr)
         if (ImGui::Button("Launch SKSE"))
         {
             LaunchSKSE(mgr);
+        }
+
+        if (ImGui::Button("Launch a terminal"))
+        {
+            LaunchShell(mgr);
         }
 
         if (ImGui::Button("Settings"))
@@ -494,7 +501,22 @@ std::optional<std::string> DetectAppDataLocal(ModMgr& mgr)
     return {};
 }
 
-bool LoadModMgr(ModMgr& mgr, std::string const& filePath)
+void LoadBuiltinTools(ModMgr& mgr)
+{
+    auto sksePath = WordExpand(shellFix(std::filesystem::path(mgr.config.installRoot) / "skse64_loader.exe"));
+    if (!sksePath)
+    {
+        std::cout << "Failed to resolve the install path" << std::endl;
+        return;
+    }
+    ModExec& skse = mgr.inst.builtinExec.emplace_back();
+    skse.execName = "skse";
+    skse.execPath = "/usr/bin/wine";
+    
+    skse.args = {*sksePath};
+}
+
+bool LoadModMgr(ModMgr& mgr, std::string const& filePath, bool createNew)
 {
     mgr.config.configPath = filePath;
     std::filesystem::path pth;
@@ -581,7 +603,7 @@ bool LoadModMgr(ModMgr& mgr, std::string const& filePath)
         }
         DiscoverPlugins(mgr);
     }
-    else if (std::filesystem::is_directory(pth.parent_path()))
+    else if (createNew && std::filesystem::is_directory(pth.parent_path()))
     {
         std::cout << "Failed to find config file, creating new instance at " << filePath << std::endl;
         std::filesystem::path p = pth;
@@ -612,12 +634,14 @@ bool LoadModMgr(ModMgr& mgr, std::string const& filePath)
     }
     else
     {
-        std::cout << "Failed to find dir at " << pth.parent_path() << std::endl;
+        std::cout << "Failed to create or load an instance " << " (createNew=" << createNew << ") at " << pth.parent_path() << std::endl;
         return false;
     }
-
+    
+    LoadBuiltinTools(mgr);
 
     return true;
 }
+
 
 

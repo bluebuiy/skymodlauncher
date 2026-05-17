@@ -6,6 +6,78 @@
 #include <iostream>
 #include <sys/wait.h>
 
+#include <format>
+#include <algorithm>
+
+std::string shellUnfix(std::string const & s)
+{
+    std::string ret;
+    bool back = false;
+    for (int i = 0; i < s.size(); ++i)
+    {
+        if (s[i] == '\\')
+        {
+            
+        }
+        else
+        {
+            ret.push_back(s[i]);
+        }
+    }
+    return ret;
+}
+
+std::string shellFix(std::string const & s)
+{
+    std::string ret;
+    for (int i = 0; i < s.size(); ++i)
+    {
+        if (s[i] == ' ')
+        {
+            ret.push_back('\\');
+        }
+        ret.push_back(s[i]);
+    }
+    return ret;
+}
+
+std::string mfix(std::string const & s)
+{
+    auto b = WordExpand(shellFix(s));
+    if (b)
+    {
+        return shellFix(*b);
+    }
+    return shellFix(s);
+}
+
+void removecrlf(std::string & str)
+{
+    auto end = std::remove_if(str.begin(), str.end(), [](char c){
+        return c == '\r' || c == '\n';
+    });
+    str.erase(end, str.end());
+}
+
+std::vector<std::string> ShellSplit(std::string const & str)
+{
+    wordexp_t wexp;
+    int err = wordexp(str.c_str(), &wexp, WRDE_NOCMD);
+    if (err != 0)
+    {
+        return {};
+    }
+
+    std::vector<std::string> ret;
+    for (int i = 0; i < wexp.we_wordc; ++i)
+    {
+        ret.emplace_back(wexp.we_wordv[i]);
+    }
+
+    wordfree(&wexp);
+    return ret;
+}
+
 std::optional<std::string> WordExpand(std::string const & in)
 {
     wordexp_t wexp;
@@ -25,33 +97,62 @@ std::optional<std::string> WordExpand(std::string const & in)
     return result;
 }
 
+std::optional<std::string> WordExpand2(std::string const & in)
+{
+    auto str = mfix(in);
+    auto o = WordExpand(in);
+    if (!o)
+    {
+        return {};
+    }
+    return shellUnfix(*o);
+}
+
+bool ExecArgs(std::vector<std::string> & args)
+{
+    std::vector<char *> argsv;
+    for (int i = 0; i < args.size(); ++i)
+    {
+        argsv.push_back(args[i].data());
+    }
+    argsv.push_back(nullptr);
+    if (!execv(args[0].c_str(), argsv.data()))
+    {
+        return false;
+    }
+    // cant return true
+    return true;
+}
+
 bool LaunchProc(std::vector<std::string> & cmd, std::string const & wd)
 {
     if (cmd.empty() || cmd[0].empty())
     {
         std::cout << "Tried to execute \"\"" << std::endl;
-        return {};
+        return false;
     }
 
     std::cout << "Executing proc: " << cmd[0] << std::endl;
 
     std::vector<char *> args;
     for (int i = 0; i < cmd.size(); ++i)
-    {
+    { 
+        std::cout << cmd[i] << " ";
         args.push_back(cmd[i].data());
     }
+    std::cout << std::endl;
     args.push_back(nullptr);
 
     int pid = fork();
 
     if (pid == -1)
     {
-        return {};
+        return false;
     }
     else if (pid == 0)
     {
         // child
-        int cd = chdir(wd.c_str());
+        int cd = wd.size() ? chdir(wd.c_str()) : 0;
         if (cd == 0)
         {
             std::cout << "execv " << cmd[0] << std::endl;
@@ -68,11 +169,19 @@ bool LaunchProc(std::vector<std::string> & cmd, std::string const & wd)
     }
     else
     {
-        if (pid != waitpid(pid, nullptr, 0))
+        int ret = 0;
+        if (pid != waitpid(pid, &ret, 0))
         {
             std::cout << "Error waiting for process completion" << std::endl;
+            return false;
+        }
+        else if (ret != 0)
+        {
+            std::cout << "Process failed with " << ret << std::endl;
+            return false;
         }
     }
+    return true;
 }
 
 std::optional<std::string> LaunchProcForOutput(std::vector<std::string> & cmd, std::string const & wd)
@@ -155,53 +264,54 @@ std::optional<std::string> LaunchProcForOutput(std::vector<std::string> & cmd, s
 
 bool ForkInvoke(ProcInvoke * invoke)
 {
-    int ppp[2];
-    if (pipe(ppp) < 0)
-    {
-        return {};
-    }
-
+    std::cout << "Forking" << std::endl;
     int pid = fork();
 
     if (pid == -1)
     {
+        std::cout << "Failed to fork" << std::endl;
         return false;
     }
     else if (pid == 0)
     {
         // child
-        dup2(ppp[1], STDOUT_FILENO);
+        std::cout << "Running invoker" << std::endl;
         invoke->invoke();
         exit(0);
     }
     else
     {
-        // parent
-        std::string output;
-
-        char buf[1024];
-
-        while (true)
+        std::cout << "Waiting for child.." << std::endl;
+        int ret = 0;
+        if (pid != waitpid(pid, &ret, 0))
         {
-            ssize_t s = read(ppp[0], buf, sizeof(buf));
-            if (s == 0)
-            {
-                break;
-            }
-            else if (s == -1)
-            {
-                std::cout << "Error reading pipe" << std::endl;
-            }
-            else
-            {
-                output.insert(output.end(), buf, buf + s);
-                std::cout << output;
-                output.clear();
-            }
+            std::cout << "Error waiting for process completion" << std::endl;
+            return false;
+        }
+        else if (ret != 0)
+        {
+            std::cout << "Process failed with " << ret << std::endl;
         }
     }
     return true;
 }
 
+bool ExecThisProcessUnshared(std::vector<std::string> const & args)
+{
+    int pid = getpid();
+    std::vector<std::string> getThisProcCmd = {"/usr/bin/readlink", "-f", std::format("/proc/{}/exe", pid)};
+    auto thisProcPath = LaunchProcForOutput(getThisProcCmd, "/");
+    if (!thisProcPath)
+    {
+        std::cout << "Failed to get proc path" << std::endl;
+        return false;
+    }
+    removecrlf(*thisProcPath);
+    std::cout << "Unsharing" << std::endl;
+    std::vector<std::string> launchThisProcess = {"/usr/bin/unshare", "--user", "--map-root-user", "--mount", *thisProcPath, "-r"};//, "-c", confPath, "-e", "skse"};
+    launchThisProcess.insert(launchThisProcess.end(), args.begin(), args.end());
+    
+    return ExecArgs(launchThisProcess);
+}
 
 

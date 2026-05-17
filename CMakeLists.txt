@@ -55,9 +55,15 @@ target_sources(skymodlaunch
         src/modmgr_json.h
         src/prochelper.cpp
         src/prochelper.h
+        src/procex.cpp
 )
 
 target_link_libraries(skymodlaunch
     PRIVATE
         glfw
+)
+
+target_compile_options(skymodlaunch
+    PRIVATE
+        -Werror=return-type
 )

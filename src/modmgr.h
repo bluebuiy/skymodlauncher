@@ -1,6 +1,8 @@
 
 #pragma once
 
+#include "prochelper.h"
+
 #include <vector>
 #include <string>
 #include <filesystem>
@@ -35,8 +37,12 @@ struct ModMgrConfig
 
 struct ModExec
 {
+    // unique human-readable-ish name for the tool. ie skse
     std::string execName;
-    std::string args;
+    // the actual path to execute it. ie /usr/bin/wine
+    std::string execPath;
+    // ie ~/.wine/GOG Games/Skyrim Anniversary Edition/skse64_launcher.exe
+    std::vector<std::string> args;
 };
 
 struct ModInfo
@@ -60,6 +66,7 @@ struct ModMgrInst
     int version = 0;
     std::vector<ModInfo> mods;
     std::vector<ModExec> customExec;
+    std::vector<ModExec> builtinExec;
     std::vector<ModPlugin> pluginList;
 };
 
@@ -86,12 +93,28 @@ struct ModMgr
 
 };
 
+struct ExecToolProgram : public ProcInvoke
+{
+    std::vector<std::string> args;
+    virtual void invoke() override
+    {
+        ExecThisProcessUnshared(args);
+    }
+};
 
 void RenderModMgr(ModMgr& mgr);
 
 void SaveModMgr(ModMgr& mgr);
 
-bool LoadModMgr(ModMgr& mgr, std::string const& filePath);
+bool LoadModMgr(ModMgr& mgr, std::string const& filePath, bool createNew);
+
+
+bool SetupPreMountEnv();
+bool InvokeTool(ModMgr& mgr, std::string const & toolName);
+bool InvokeProcess(ModMgr& mgr, std::vector<std::string> & args);
+
+bool WritePluginsTxt(ModMgr& mgr, std::filesystem::path const & path);
+
 
 #include "modmgr_json.h"
 
