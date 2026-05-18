@@ -47,6 +47,14 @@ namespace nlohmann
         
         static void from_json(json const & j, ModPlugin & cfg);
     };
+
+    template <>
+    struct adl_serializer<CustomVariable>
+    {
+        static void to_json(json& j, CustomVariable const & cfg);
+        
+        static void from_json(json const & j, CustomVariable & cfg);
+    };
 }
 
 

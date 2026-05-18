@@ -89,9 +89,16 @@ struct ModMgr
     bool verbose = false;
 
     ModInfo newMod;
+    CustomVariable newVariable;
+    ModExec newExec;
 
     //////// ImGui state cache ////////
 
+    std::string currentExec;
+
+    bool addingExec = false;
+    bool modifyingExec = false;
+    bool selectingExec = false;
     bool enableRemove = false;
     int sortMode = 0;
     bool makingNewMod = false;

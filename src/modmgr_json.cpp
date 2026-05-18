@@ -54,6 +54,7 @@ namespace nlohmann
         JPUT(j, mi, mods);
         JPUT(j, mi, customExec);
         JPUT(j, mi, pluginList);
+        JPUT(j, mi, customVariables);
     }
 
     void adl_serializer<ModMgrInst>::from_json(json const & j, ModMgrInst& mi)
@@ -62,18 +63,23 @@ namespace nlohmann
         JPULL(j, mi, mods);
         JPULL(j, mi, customExec);
         JPULL(j, mi, pluginList);
+        JPULL(j, mi, customVariables);
     }
     
     void adl_serializer<ModExec>::to_json(json& j, ModExec const & me)
     {
         JPUT(j, me, execName);
+        JPUT(j, me, execPath);
         JPUT(j, me, args);
+        JPUT(j, me, updatePluginList);
     }
 
     void adl_serializer<ModExec>::from_json(json const & j, ModExec& me)
     {
         JPULL(j, me, execName);
+        JPULL(j, me, execPath);
         JPULL(j, me, args);
+        JPULL(j, me, updatePluginList);
     }
 
 
@@ -89,6 +95,17 @@ namespace nlohmann
         JPULL(j, mp, enabled);
     }
 
+    void adl_serializer<CustomVariable>::to_json(json& j, CustomVariable const & cv)
+    {
+        JPUT(j, cv, name);
+        JPUT(j, cv, value);
+    }
+
+    void adl_serializer<CustomVariable>::from_json(json const & j, CustomVariable& cv)
+    {
+        JPULL(j, cv, name);
+        JPULL(j, cv, value);
+    }
 
 }
 
