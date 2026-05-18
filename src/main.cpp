@@ -22,7 +22,8 @@ void printHelp()
     std::cout << "  -c path         specify a specific configuration file to use\n";
     std::cout << "  -s              verbose\n";
     std::cout << "  -e exec         invoke a preconfigured executable in the injected filesystem\n";
-    std::cout << "  -x exec         invoke exec in a shell, inside the injected filesystem\n";
+    std::cout << "  -x exec         invoke arbitrary command line, inside the injected filesystem (not in a shell!)\n";
+    std::cout << "  -r              do not unshare (because it's already been done). only affects -e, -x.\n";
     std::cout << std::endl;
 }
 
@@ -86,7 +87,6 @@ int main(int argc, char** argv)
             }
             case 'r':
             {
-                std::cout << "-r!" << std::endl;
                 invokedRaw = false;
                 break;
             }
