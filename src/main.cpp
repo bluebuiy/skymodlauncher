@@ -161,16 +161,16 @@ int main(int argc, char** argv)
             }
             else
             {
-                auto cmd = ShellSplit(shArgs);
+                auto subShArgs = ReplaceEnvVariables(config, shArgs, true);
+                if (!subShArgs)
+                {
+                    std::cout << "Failed varibale substitution:\n" << shArgs << std::endl;
+                    exit(1);
+                }
+                auto cmd = ShellSplit(*subShArgs);
                 for (auto&& arg : cmd)
                 {
-                    auto narg = ReplaceEnvVariables(config, arg, true);
-                    if (!narg)
-                    {
-                        std::cout << "Failed variable substitution in\n" << arg << std::endl;
-                        exit(1);
-                    }
-                    auto exparg = WordExpand(shellFix(*narg));
+                    auto exparg = WordExpand(shellFix(arg));
                     if (!exparg)
                     {
                         std::cout << "Failed to resolve string" << std::endl;
@@ -178,6 +178,7 @@ int main(int argc, char** argv)
                     }
                     arg = *exparg;
                 }
+                std::cout << "args: " << cmd.size() << std::endl;
                 InvokeProcess(config, cmd);
             }
 

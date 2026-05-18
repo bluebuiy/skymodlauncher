@@ -258,7 +258,14 @@ bool InvokeTool(ModMgr& mgr, std::string const & toolName)
     }
     launcher.mountExec = *mountCmd;
     launcher.wd = installRoot;
-    launcher.toolExec.emplace_back((toolDef.execPath));
+
+    auto expExecPath = ReplaceEnvVariables(mgr, toolDef.execPath, true);
+    if (!expExecPath)
+    {
+        std::cout << "Failed variable subsitution:\n" << toolDef.execPath << std::endl;
+        return false;
+    }
+    launcher.toolExec.emplace_back(*expExecPath);
 
     for (auto&& arg : toolDef.args)
     {
@@ -291,6 +298,7 @@ struct ProcRunner : public ProcInvoke
     std::vector<std::string> args;
     virtual void invoke() override
     {
+        std::cout << "Fdjklfs" << std::endl;
         LaunchProc(mountCmd, "");
         LaunchProc(args, "");
     }

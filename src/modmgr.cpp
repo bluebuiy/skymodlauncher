@@ -156,7 +156,7 @@ void LaunchShell(ModMgr& mgr)
         std::cout << "Failed to resolve config path" << std::endl;
         return;
     }
-    std::vector<std::string> launchArgs = {"-c", confPath, "-x", "/usr/bin/ls -al /home/max/.wine/drive_c/GOG\\ Games/Skyrim\\ Anniversary\\ Edition/"};
+    std::vector<std::string> launchArgs = {"-c", confPath, "-x", "/usr/bin/ls -al #{GAME_ROOT_DIR}"};
     ExecToolProgram ex;
     ex.args = launchArgs;
     ForkInvoke(&ex);
@@ -328,7 +328,7 @@ void RenderModMgr(ModMgr& mgr)
             LaunchSKSE(mgr);
         }
 
-        if (ImGui::Button("Launch a terminal"))
+        if (ImGui::Button("Launch arbitrary program"))
         {
             LaunchShell(mgr);
         }
@@ -526,17 +526,12 @@ std::optional<std::string> DetectAppDataLocal(ModMgr& mgr)
 
 void LoadBuiltinTools(ModMgr& mgr)
 {
-    auto sksePath = WordExpand(shellFix(std::filesystem::path(mgr.config.installRoot) / "skse64_loader.exe"));
-    if (!sksePath)
-    {
-        std::cout << "Failed to resolve the install path" << std::endl;
-        return;
-    }
+    auto sksePath = std::filesystem::path("${GAME_ROOT_DIR}") / "skse64_loader.exe";
     ModExec& skse = mgr.inst.builtinExec.emplace_back();
     skse.execName = "skse";
-    skse.execPath = "/usr/bin/wine";
+    skse.execPath = "${WINE_CMD}";
     
-    skse.args = {*sksePath};
+    skse.args = {sksePath};
 }
 
 bool LoadModMgr(ModMgr& mgr, std::string const& filePath, bool createNew)
@@ -672,6 +667,7 @@ std::optional<std::string> DoReplaceVars(std::string const & in, std::unordered_
     std::string ret;
     size_t i = 0;
     size_t beg = -1;     // start of var name
+    bool sf = false;
     bool d = false;     // $
     bool o = false;     // {
     while (true)
@@ -684,6 +680,12 @@ std::optional<std::string> DoReplaceVars(std::string const & in, std::unordered_
                 if (ch == '$')
                 {
                     d = true;
+                    sf = false;
+                }
+                else if (ch == '#')
+                {
+                    d = true;
+                    sf = true;
                 }
                 else
                 {
@@ -716,7 +718,12 @@ std::optional<std::string> DoReplaceVars(std::string const & in, std::unordered_
                     auto elem = vars.find(name);
                     if (elem != vars.end())
                     {
-                        ret.insert(ret.end(), elem->second.begin(), elem->second.end());
+                        std::string val = elem->second;
+                        if (sf)
+                        {
+                            val = shellFix(val);
+                        }
+                        ret.insert(ret.end(), val.begin(), val.end());
                         beg = -1;
                     }
                     else
@@ -772,6 +779,7 @@ std::optional<std::string> ReplaceEnvVariables(ModMgr& mgr, std::string const & 
     varMap.emplace("INI_DIR", mgr.config.mgRoot);
     varMap.emplace("OVERWRITE_DIR", std::filesystem::path(mgr.config.projectDir) / "overwrite");
     varMap.emplace("PROJECT_DIR", mgr.config.projectDir);
+    varMap.emplace("WINE_CMD", "/usr/bin/wine");
 
     // duplicates get ignored!
     for (auto&& cv : mgr.inst.customVariables)

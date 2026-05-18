@@ -119,9 +119,11 @@ std::optional<std::string> WordExpand2(std::string const & in)
 
 bool ExecArgs(std::vector<std::string> & args)
 {
+    std::cout << "Execv " << args[0] << std::endl;
     std::vector<char *> argsv;
     for (int i = 0; i < args.size(); ++i)
     {
+        std::cout << "    " << args[i] << std::endl;
         argsv.push_back(args[i].data());
     }
     argsv.push_back(nullptr);
@@ -146,10 +148,9 @@ bool LaunchProc(std::vector<std::string> & cmd, std::string const & wd)
     std::vector<char *> args;
     for (int i = 0; i < cmd.size(); ++i)
     { 
-        std::cout << cmd[i] << " ";
+        std::cout << "    " << cmd[i] << std::endl;
         args.push_back(cmd[i].data());
     }
-    std::cout << std::endl;
     args.push_back(nullptr);
 
     int pid = fork();
