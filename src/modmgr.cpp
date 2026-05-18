@@ -10,12 +10,33 @@
 #include <filesystem>
 #include <unistd.h>
 #include <unordered_set>
+#include <ranges>
 
-//void LaunchExecInOverlay(ModMgr& mgr, std::string const & exec)
-//{
-//    
-//}
-
+void RenderTestUi(ModMgr& mgr)
+{
+#if 0
+    static char strBuf[128] = {0};
+    static char strBufOut[256] = {0};
+    static bool failRep = false;
+    if (ImGui::Begin("Tests"))
+    {
+        ImGui::InputText("Var rep test", strBuf, sizeof(strBuf));
+        ImGui::Checkbox("Fail rep", &failRep);
+        if (ImGui::Button("Replace"))
+        {
+            std::string str(strBuf);
+            auto rep = ReplaceEnvVariables(mgr, str, failRep);
+            if (rep)
+            {
+                strncpy(strBufOut, rep->c_str(), 128);
+                strBufOut[127] = 0;
+            }
+        }
+        ImGui::TextWrapped("%s", strBufOut);
+    }
+    ImGui::End();
+#endif
+}
 
 bool WritePluginsTxt(ModMgr& mgr, std::filesystem::path const & path)
 {
@@ -288,6 +309,8 @@ void RenderPluginsList(ModMgr& mgr)
 
 void RenderModMgr(ModMgr& mgr)
 {
+    RenderTestUi(mgr);
+
     if (ImGui::BeginMainMenuBar())
     {
         if (ImGui::Button("Save"))
@@ -643,5 +666,125 @@ bool LoadModMgr(ModMgr& mgr, std::string const& filePath, bool createNew)
     return true;
 }
 
+std::optional<std::string> DoReplaceVars(std::string const & in, std::unordered_map<std::string, std::string> const & vars, bool failUnknownVariable)
+{
+    // really jank parser :D
+    std::string ret;
+    size_t i = 0;
+    size_t beg = -1;     // start of var name
+    bool d = false;     // $
+    bool o = false;     // {
+    while (true)
+    {
+        while (i < in.size())
+        {
+            auto ch = in[i];
+            if (d == false)
+            {
+                if (ch == '$')
+                {
+                    d = true;
+                }
+                else
+                {
+                    ret.push_back(ch);
+                }
+            }
+            else if (d == true && o == false)
+            {
+                if (ch == '{')
+                {
+                    o = true;
+                    beg = i + 1;
+                }
+                else
+                {
+                    ret.push_back('$');
+                    ret.push_back(ch);
+                    d = false;
+                }
+            }
+            else if (d == true && o == true)
+            {
+                if (ch == '}')
+                {
+                    d = false;
+                    o = false;
+
+                    size_t end = i;
+                    std::string name = in.substr(beg, end - beg);
+                    auto elem = vars.find(name);
+                    if (elem != vars.end())
+                    {
+                        ret.insert(ret.end(), elem->second.begin(), elem->second.end());
+                        beg = -1;
+                    }
+                    else
+                    {
+                        if (failUnknownVariable)
+                        {
+                            return {};
+                        }
+                        else
+                        {
+                            ret.push_back('$');
+                            ret.push_back('{');
+                            ret.insert(ret.end(), name.begin(), name.end());
+                            ret.push_back('}');
+                        }
+                    }
+                }
+            }
+            ++i;
+        }
+        if (d == true)
+        {
+            ret.push_back('$');
+            d = false;
+        }
+        else if (o == true)
+        {
+            // TODO fail on malformed subsitution
+            d = false;
+            o = false;
+            i = beg;
+            beg = -1;
+            ret.push_back('$');
+            ret.push_back('{');
+        }
+        else if (i < in.size())
+        {
+            
+        }
+        else
+        {
+            break;
+        }
+    }
+    return ret;
+}
+
+std::optional<std::string> ReplaceEnvVariables(ModMgr& mgr, std::string const & in, bool failOnUnknownVariable)
+{
+    std::unordered_map<std::string, std::string> varMap;
+    varMap.emplace("GAME_ROOT_DIR", mgr.config.installRoot);
+    varMap.emplace("PLUGINTXT_DIR", mgr.config.appData);
+    varMap.emplace("INI_DIR", mgr.config.mgRoot);
+    varMap.emplace("OVERWRITE_DIR", std::filesystem::path(mgr.config.projectDir) / "overwrite");
+    varMap.emplace("PROJECT_DIR", mgr.config.projectDir);
+
+    // duplicates get ignored!
+    for (auto&& cv : mgr.inst.customVariables)
+    {
+        auto it = varMap.find(cv.name);
+        if (it != varMap.end())
+        {
+            std::cout << "Redefinition of ${" << cv.name << "}, using new value:\n" << it->second << std::endl;
+        }
+        varMap.insert_or_assign(cv.name, cv.value);
+    }
+
+    return DoReplaceVars(in, varMap, failOnUnknownVariable);
+}
 
 

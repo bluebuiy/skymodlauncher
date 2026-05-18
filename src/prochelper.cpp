@@ -9,18 +9,27 @@
 #include <format>
 #include <algorithm>
 
+// probably dont need this?
 std::string shellUnfix(std::string const & s)
 {
     std::string ret;
     bool back = false;
     for (int i = 0; i < s.size(); ++i)
     {
-        if (s[i] == '\\')
+        if (back == false)
         {
-            
+            if (s[i] == '\\')
+            {
+                back = true;
+            }
+            else
+            {
+                ret.push_back(s[i]);
+            }
         }
-        else
+        else if (back == true)
         {
+            back = false;
             ret.push_back(s[i]);
         }
     }
@@ -313,5 +322,57 @@ bool ExecThisProcessUnshared(std::vector<std::string> const & args)
     
     return ExecArgs(launchThisProcess);
 }
+
+// 
+bool RunPipedShellScript(std::string const & script)
+{
+    int pppIn[2];
+    if (pipe(pppIn) < 0)
+    {
+        return false;
+    }
+
+    int pid = fork();
+
+    if (pid == -1)
+    {
+        close(pppIn[0]);
+        close(pppIn[1]);
+        return false;
+    }
+    else if (pid == 0)
+    {
+        // child
+        dup2(pppIn[0], STDIN_FILENO);
+        close(pppIn[1]);
+        std::vector<std::string> arg = {"/usr/bin/sh"};
+        ExecArgs(arg);
+        exit(1);
+    }
+    else
+    {
+        //parent
+        close(pppIn[0]);
+
+        ssize_t n = 0;
+        ssize_t l = script.size();
+        while (l)
+        {
+            ssize_t s = write(pppIn[1], script.c_str() + n, l);
+            int er = errno;
+            if (s < 0 && er != EINTR)
+            {
+                break;
+            }
+            n += s;
+            l -= s;
+        }
+        close(pppIn[1]);
+        return n == 0;
+    }
+
+    return false;
+}
+
 
 

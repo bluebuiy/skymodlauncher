@@ -43,6 +43,7 @@ struct ModExec
     std::string execPath;
     // ie ~/.wine/GOG Games/Skyrim Anniversary Edition/skse64_launcher.exe
     std::vector<std::string> args;
+    bool updatePluginList = false;
 };
 
 struct ModInfo
@@ -59,6 +60,12 @@ struct ModPlugin
     bool enabled;
 };
 
+struct CustomVariable
+{
+    std::string name;
+    std::string value;
+};
+
 struct ModMgrInst
 {
     static constexpr int VERSION = 1;
@@ -68,6 +75,7 @@ struct ModMgrInst
     std::vector<ModExec> customExec;
     std::vector<ModExec> builtinExec;
     std::vector<ModPlugin> pluginList;
+    std::vector<CustomVariable> customVariables;
 };
 
 struct ModMgr
@@ -115,6 +123,7 @@ bool InvokeProcess(ModMgr& mgr, std::vector<std::string> & args);
 
 bool WritePluginsTxt(ModMgr& mgr, std::filesystem::path const & path);
 
+std::optional<std::string> ReplaceEnvVariables(ModMgr& mgr, std::string const & in, bool failOnUnknownVariable);
 
 #include "modmgr_json.h"
 

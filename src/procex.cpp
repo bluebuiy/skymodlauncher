@@ -238,11 +238,14 @@ bool InvokeTool(ModMgr& mgr, std::string const & toolName)
 
     std::cout << "writing plugins" << std::endl;
 
-    auto pluginPath = std::filesystem::path(mgr.config.appData) / "Plugins.txt";
-    if (!WritePluginsTxt(mgr, pluginPath))
+    if (toolDef.updatePluginList)
     {
-        std::cout << "Failed to write plugins.txt" << std::endl;
-        return false;
+        auto pluginPath = std::filesystem::path(mgr.config.appData) / "Plugins.txt";
+        if (!WritePluginsTxt(mgr, pluginPath))
+        {
+            std::cout << "Failed to write plugins.txt" << std::endl;
+            return false;
+        }
     }
 
     std::cout << "Setting up launcher" << std::endl;
@@ -256,7 +259,25 @@ bool InvokeTool(ModMgr& mgr, std::string const & toolName)
     launcher.mountExec = *mountCmd;
     launcher.wd = installRoot;
     launcher.toolExec.emplace_back((toolDef.execPath));
-    launcher.toolExec.insert(launcher.toolExec.end(), toolDef.args.begin(), toolDef.args.end());
+
+    for (auto&& arg : toolDef.args)
+    {
+        auto narg = ReplaceEnvVariables(mgr, arg, true);
+        if (!narg)
+        {
+            std::cout << "Failed variable subsitution:\n" << arg << std::endl;
+            return false;
+        }
+        auto exparg = WordExpand(shellFix(*narg));
+        if (!exparg)
+        {
+            std::cout << "Failed to resolve string" << std::endl;
+            return false;
+        }
+        launcher.toolExec.emplace_back(std::move(*exparg));
+    }
+
+    //launcher.toolExec.insert(launcher.toolExec.end(), toolDef.args.begin(), toolDef.args.end());
     
     // should already be in a new process, no extra fork or exec needed.
     return ForkInvoke(&launcher);
@@ -278,12 +299,15 @@ struct ProcRunner : public ProcInvoke
 
 bool InvokeProcess(ModMgr& mgr, std::vector<std::string> & args)
 {
+    /*
+    // not sure how to configure this
     auto pluginPath = std::filesystem::path(mgr.config.appData) / "Plugins.txt";
     if (!WritePluginsTxt(mgr, pluginPath))
     {
         std::cout << "Failed to write plugins.txt" << std::endl;
         return false;
     }
+    */
 
     auto mountCmd = BuildMountCommand(mgr);
     if (!mountCmd)
