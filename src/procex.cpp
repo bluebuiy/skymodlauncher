@@ -100,7 +100,18 @@ bool SetupPreMountEnv()
     return true;
 }
 
-std::optional<std::vector<std::string>> BuildMountCommand(ModMgr& mgr)
+/*
+    std::cout << "writing plugins" << std::endl;
+
+    auto pluginPath = std::filesystem::path(mgr.config.appData) / "Plugins.txt";
+    if (!WritePluginsTxt(mgr, pluginPath))
+    {
+        std::cout << "Failed to write plugins.txt" << std::endl;
+        return {};
+    }
+*/
+
+std::optional<std::vector<std::vector<std::string>>> BuildMountCommands(ModMgr& mgr)
 {
     std::string installRoot;
     if (auto o = WordExpand(shellFix(mgr.config.installRoot)))
@@ -110,32 +121,6 @@ std::optional<std::vector<std::string>> BuildMountCommand(ModMgr& mgr)
     else
     {
         std::cout << "Failed to resolve paths" << std::endl;
-        return {};
-    }
-
-    std::string lowerLayers;
-    std::sort(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](auto& a, auto& b){ return a.loadIndex < b.loadIndex; });
-    auto p = std::filesystem::path(mgr.config.modFolder);
-    lowerLayers += installRoot;
-    if (!mgr.inst.mods.empty())
-    {
-        lowerLayers += ":";
-    }
-    for (int i = 0; i < mgr.inst.mods.size(); ++i)
-    {
-        int index = mgr.inst.mods.size() - i - 1;
-        lowerLayers += (p / mgr.inst.mods[index].modFile);
-        if (index != 0)
-        {
-            lowerLayers += ":";
-        }
-    }
-    std::cout << "writing plugins" << std::endl;
-
-    auto pluginPath = std::filesystem::path(mgr.config.appData) / "Plugins.txt";
-    if (!WritePluginsTxt(mgr, pluginPath))
-    {
-        std::cout << "Failed to write plugins.txt" << std::endl;
         return {};
     }
 
@@ -159,28 +144,64 @@ std::optional<std::vector<std::string>> BuildMountCommand(ModMgr& mgr)
         std::cout << "Failed to resolve paths" << std::endl;
         return {};
     }
-    std::string layers = std::format("lowerdir={},upperdir={},workdir={}", lowerLayers, overwrite, work);
 
-    return std::vector<std::string>{
-        "/usr/bin/mount",
-        "-t", "overlay",
-        "none",
-        "-o", layers,
-        installRoot
-    };
+    std::filesystem::path modDir;
+    if (auto o = WordExpand(shellFix(mgr.config.modFolder)))
+    {
+        modDir = *o;
+    }
+    else
+    {
+        return {};
+    }
+
+    std::sort(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](auto& a, auto& b){ return a.loadIndex < b.loadIndex; });
+
+    std::vector<std::vector<std::string>> commands;
+
+    int modIndex = 0;
+
+    while (modIndex < mgr.inst.mods.size())
+    {
+        std::string lowerLayers;
+        lowerLayers += installRoot;
+
+        for (int i = 0; i < 254 && modIndex < mgr.inst.mods.size(); ++i, ++modIndex)
+        {
+            lowerLayers += ":";
+            int index = mgr.inst.mods.size() - modIndex - 1;
+            lowerLayers += (modDir / mgr.inst.mods[index].modFile);
+        }
+
+        std::string layers = std::format("lowerdir={},upperdir={},workdir={}", lowerLayers, overwrite, work);
+
+        std::vector<std::string> cmd = {
+            "/usr/bin/mount",
+            "-t", "overlay",
+            "none",
+            "-o", layers,
+            installRoot
+        };
+
+        commands.emplace_back(std::move(cmd));
+    }
+    return commands;
 }
 
 struct ToolRunner : ProcInvoke
 {
-    std::vector<std::string> mountExec;
+    std::vector<std::vector<std::string>> mountExec;
     std::vector<std::string> toolExec;
     std::string wd;
     void invoke()
     {
-        if (!LaunchProc(mountExec, wd))
+        for (int i = 0; i < mountExec.size(); ++i)
         {
-            std::cout << "Failed to set up mounts" << std::endl;
-            return;
+            if (!LaunchProc(mountExec[i], wd))
+            {
+                std::cout << "Failed to set up mounts" << std::endl;
+                return;
+            }
         }
         if (0 != chdir(wd.c_str()))
         {
@@ -250,13 +271,13 @@ bool InvokeTool(ModMgr& mgr, std::string const & toolName)
 
     std::cout << "Setting up launcher" << std::endl;
     ToolRunner launcher;
-    auto mountCmd = BuildMountCommand(mgr);
-    if (!mountCmd)
+    auto mountCmds = BuildMountCommands(mgr);
+    if (!mountCmds)
     {
         std::cout << "Failed to build mount command" << std::endl;
         return false;
     }
-    launcher.mountExec = *mountCmd;
+    launcher.mountExec = *mountCmds;
     launcher.wd = installRoot;
 
     auto expExecPath = ReplaceEnvVariables(mgr, toolDef.execPath, true);
@@ -294,13 +315,23 @@ bool InvokeTool(ModMgr& mgr, std::string const & toolName)
 struct ProcRunner : public ProcInvoke
 {
     std::string wd;
-    std::vector<std::string> mountCmd;
+    std::vector<std::vector<std::string>> mountCmds;
     std::vector<std::string> args;
     virtual void invoke() override
     {
-        std::cout << "Fdjklfs" << std::endl;
-        LaunchProc(mountCmd, "");
-        LaunchProc(args, "");
+        bool failed = false;
+        for (int i = 0; i < mountCmds.size(); ++i)
+        {
+            if (!LaunchProc(mountCmds[i], ""))
+            {
+                failed = true;
+                break;
+            }
+        }
+        if (!failed)
+        {
+            LaunchProc(args, "");
+        }
     }
 };
 
@@ -317,8 +348,8 @@ bool InvokeProcess(ModMgr& mgr, std::vector<std::string> & args)
     }
     */
 
-    auto mountCmd = BuildMountCommand(mgr);
-    if (!mountCmd)
+    auto mountCmds = BuildMountCommands(mgr);
+    if (!mountCmds)
     {
         std::cout << "Failed to build mount command" << std::endl;
         return false;
@@ -331,7 +362,7 @@ bool InvokeProcess(ModMgr& mgr, std::vector<std::string> & args)
     //}
 
     ProcRunner runner;
-    runner.mountCmd = *mountCmd;
+    runner.mountCmds = *mountCmds;
     runner.args = args;
     return ForkInvoke(&runner);
     //return ExecArgs(args);

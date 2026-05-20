@@ -518,11 +518,6 @@ void RenderModMgr(ModMgr& mgr)
     {
         RenderTools(mgr);
 
-        if (ImGui::Button("Launch arbitrary program"))
-        {
-            LaunchShell(mgr);
-        }
-
         if (ImGui::Button("Settings"))
         {
             mgr.settingsOpen = true;
