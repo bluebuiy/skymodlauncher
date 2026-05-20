@@ -356,6 +356,7 @@ void RenderPluginsList(ModMgr& mgr)
             {
                 std::swap(mgr.inst.pluginList[move], mgr.inst.pluginList[move - 1]);
             }
+            SaveModMgr(mgr);
         }
     }
     ImGui::End();
@@ -365,11 +366,11 @@ void RenderTools(ModMgr& mgr)
 {
     mgr.selectingExec ^= ImGui::Button("Select Tool");
     ImGui::BeginDisabled(mgr.addingExec | mgr.modifyingExec);
-    if (ImGui::Button("New Exec"))
+    if (ImGui::Button("New Tool"))
     {
         mgr.addingExec = true;
     }
-    if (ImGui::Button("Modify Exec"))
+    if (ImGui::Button("Modify Tool"))
     {
         bool found = false;
         for (int i = 0; i < mgr.inst.customExec.size(); ++i)
@@ -626,6 +627,7 @@ void RenderModMgr(ModMgr& mgr)
             }
             mgr.inst.mods[mvDown].loadIndex++;
         }
+        SaveModMgr(mgr);
     }
     ImGui::End();
 

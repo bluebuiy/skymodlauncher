@@ -17,11 +17,6 @@ then the executable will be at `out/ninja-release/skymodlaunch`.  For less techn
 ## Installing Mods
 In the UI, create a mod.  The program will create a directory;  Copy the mod contents to the directory it created.  Unlike MO2, where mod folders are attached to `/Data`, mod folders are attached to the game's install root (ie the same directory that SkyrimSE.exe is located).  This means most mods need a Data directory in them, and things like SKSE can be added as a mod, instead of directly added to the game root.
 
-If you wish to run a command in the injected filesystem, the generated launch.sh contains the setup commands.  Copy it, replce the `wine skyrimSE.exe` with your custom command, then run:
-
-    unshare --user --map-root-user --mount sh modified-launch.sh
-
-
 
 ## Limitations
 Overlayfs has a limit of 255 lower filesystems, thus this program can handle a maximum of 254 mods.  This can be worked around in the future by, for example, merging non-conflicting mods together into one layer. 
@@ -31,10 +26,8 @@ Overlayfs has a limit of 255 lower filesystems, thus this program can handle a m
 
 ## Todo:
  * import loadorder.txt (from loot)
- * Custom executables to run in modded filesystem (ie fnis, bodyslide etc)
  * Overlay ~/Documents/My Games/Skyrim for ini and saves
- * Ui for adding custom executables
- * Directly invoke unshare and mount, instead of relying on cli
+ * Directly invoke unshare and mount, instead of cli
  * Unlimited mods
 
 ## Out of scope of this implementation:
