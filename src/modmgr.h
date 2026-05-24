@@ -132,5 +132,9 @@ bool WritePluginsTxt(ModMgr& mgr, std::filesystem::path const & path);
 
 std::optional<std::string> ReplaceEnvVariables(ModMgr& mgr, std::string const & in, bool failOnUnknownVariable);
 
+void LaunchExec(ModMgr& mgr, std::string const & execName);
+void DiscoverPlugins(ModMgr& mgr);
+std::optional<std::string> DetectAppDataLocal(ModMgr& mgr);
+
 #include "modmgr_json.h"
 
