@@ -1,0 +1,21 @@
+
+Download URL generator
+
+https://app.swaggerhub.com/apis-docs/NexusMods/nexus-mods_public_api_params_in_form_data/1.0#/Mod%20Files/get_v1_games_game_domain_mods_mod_id_files_id_download_link.json
+
+oauth2 docs
+https://modding.wiki/en/api/oauth2-guide
+
+graphql api
+https://graphql.nexusmods.com/#introduction
+
+
+
+libcurl4-openssl-dev
+
+xdg-mime default skymodlauncher-nxmurl.desktop x-scheme-handler/nxm
+
+test the url handler:
+
+    bash -c 'if [[ -p /tmp/skymodurl ]]; then printf "hi" > /tmp/skymodurl; fi'
+

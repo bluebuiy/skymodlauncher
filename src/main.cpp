@@ -312,6 +312,8 @@ int main(int argc, char** argv)
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        CheckNXMAction(config);
+
         RenderModMgr(config);
 
         // Rendering
@@ -327,6 +329,7 @@ int main(int argc, char** argv)
     }
 
     SaveModMgr(config);
+    CleanupNXMAction(config);
 
     // Cleanup
     ImGui_ImplOpenGL3_Shutdown();

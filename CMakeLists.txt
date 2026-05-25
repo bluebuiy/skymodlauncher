@@ -6,6 +6,8 @@ project(skymodlauncher LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 
+find_package(CURL 4)
+
 include(FetchContent)
 
 FetchContent_Declare(
@@ -62,6 +64,7 @@ target_sources(skymodlaunch
 target_link_libraries(skymodlaunch
     PRIVATE
         glfw
+        curl
 )
 
 target_compile_options(skymodlaunch

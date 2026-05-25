@@ -6,6 +6,7 @@
 #include <vector>
 #include <string>
 #include <filesystem>
+#include <curl/curl.h>
 
 struct ModMgrConfig
 {
@@ -78,6 +79,12 @@ struct ModMgrInst
     std::vector<CustomVariable> customVariables;
 };
 
+struct ModDownload
+{
+    CURL* dl = nullptr;
+    std::filesystem::path file;
+};
+
 struct ModMgr
 {
     ModMgrConfig config;
@@ -105,6 +112,10 @@ struct ModMgr
     bool settingsOpen = false;
     bool foundSkyrimExe = false;
     bool foundSkyrimIni = false;
+
+    // 
+
+    int urlPipe = -1;
 
 };
 
@@ -135,6 +146,10 @@ std::optional<std::string> ReplaceEnvVariables(ModMgr& mgr, std::string const & 
 void LaunchExec(ModMgr& mgr, std::string const & execName);
 void DiscoverPlugins(ModMgr& mgr);
 std::optional<std::string> DetectAppDataLocal(ModMgr& mgr);
+
+void CheckNXMAction(ModMgr& mgr);
+void SetupNXMActionPipe(ModMgr& mgr);
+void CleanupNXMAction(ModMgr& mgr);
 
 #include "modmgr_json.h"
 

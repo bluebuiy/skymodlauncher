@@ -7,6 +7,9 @@
 #include <filesystem>
 #include <unistd.h>
 #include <unordered_set>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 bool WritePluginsTxt(ModMgr& mgr, std::filesystem::path const & path)
 {
@@ -307,6 +310,8 @@ bool LoadModMgr(ModMgr& mgr, std::string const& filePath, bool createNew)
     
     LoadBuiltinTools(mgr);
 
+    SetupNXMActionPipe(mgr);
+
     return true;
 }
 
@@ -443,3 +448,110 @@ std::optional<std::string> ReplaceEnvVariables(ModMgr& mgr, std::string const & 
 
     return DoReplaceVars(in, varMap, failOnUnknownVariable);
 }
+
+void SetupNXMActionPipe(ModMgr& mgr)
+{
+    int pe = mkfifo("/tmp/skymodurl", 0666);
+
+    int p = open("/tmp/skymodurl", O_RDONLY | O_NONBLOCK);
+
+    if (p == -1 && pe == -1)
+    {
+        printf("Failed to create & open url pipe\n");
+        close(p);
+        unlink("/tmp/skymodurl");
+        return;
+    }
+    else if (p == -1)
+    {
+        printf("Failed to open pipe\n");
+        return;
+    }
+
+    struct stat st;
+    if (fstat(p, &st) == -1)
+    {
+        printf("Failed to stat pipe\n");
+        close(p);
+        return;
+    }
+
+    if (!S_ISFIFO(st.st_mode))
+    {
+        printf("opened fd is not a fifo\n");
+        close(p);
+        return;
+    }
+
+    mgr.urlPipe = p;
+}
+
+void CheckNXMAction(ModMgr& mgr)
+{
+    char buff[1024];
+    bool err = false;
+    bool cont = true;
+    int rdAmt = 0;
+    while (cont)
+    {
+        int rn = read(mgr.urlPipe, buff + rdAmt, sizeof(buff) - rdAmt);
+        if (rn < 0)
+        {
+            int e = errno;
+            if (e == EAGAIN)
+            {
+                if (rdAmt > 0)
+                {
+                    struct timespec ts;
+                    ts.tv_sec = 0;
+                    ts.tv_nsec = 1000000;
+                    nanosleep(&ts, nullptr);
+                }
+                else
+                {
+                    cont = false;
+                }
+            }
+            else
+            {
+                err = true;
+                cont = false;
+            }
+        }
+        else if (rn == 0)
+        {
+            if (rdAmt == sizeof(buff))
+            {
+                err = true;
+                buff[sizeof(buff) - 1] = 0;
+            }
+            else
+            {
+                buff[rdAmt] = 0;
+            }
+            cont = false;
+        }
+        else
+        {
+            rdAmt += rn;
+        }
+    }
+
+    if (err)
+    {
+        close(mgr.urlPipe);
+        SetupNXMActionPipe(mgr);
+    }
+    else if (rdAmt > 0)
+    {
+        std::cout << "Received NXM url: " << buff << std::endl;
+    }
+}
+
+void CleanupNXMAction(ModMgr& mgr)
+{
+    close(mgr.urlPipe);
+    unlink("/tmp/skymodurl");
+}
+
+

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Sky Mod Launcher
+NoDisplay=true
+Exec=bash -c 'if [[ -p /tmp/skymodurl ]]; then printf "%u" > /tmp/skymodurl; fi'
+StartupNotify=false
+MimeType=x-scheme-handler/nxm;
+
