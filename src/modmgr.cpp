@@ -488,6 +488,7 @@ void SetupNXMActionPipe(ModMgr& mgr)
 
 void CheckNXMAction(ModMgr& mgr)
 {
+    int count = 0;
     char buff[1024];
     bool err = false;
     bool cont = true;
@@ -502,10 +503,20 @@ void CheckNXMAction(ModMgr& mgr)
             {
                 if (rdAmt > 0)
                 {
-                    struct timespec ts;
-                    ts.tv_sec = 0;
-                    ts.tv_nsec = 1000000;
-                    nanosleep(&ts, nullptr);
+                    if (count > 1000)
+                    {
+                        err = true;
+                        cont = false;
+                        std::cout << "Pipe timeout" << std::endl;
+                    }
+                    else
+                    {
+                        struct timespec ts;
+                        ts.tv_sec = 0;
+                        ts.tv_nsec = 1000000;
+                        nanosleep(&ts, nullptr);
+                        ++count;
+                    }
                 }
                 else
                 {
