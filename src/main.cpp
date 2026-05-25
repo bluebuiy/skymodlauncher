@@ -222,6 +222,8 @@ int main(int argc, char** argv)
         }
     }
 
+    InitMgr(config);
+    
     glfwSetErrorCallback(glfw_error_callback);
     if (!glfwInit())
         return 1;
@@ -313,6 +315,7 @@ int main(int argc, char** argv)
         ImGui::NewFrame();
 
         CheckNXMAction(config);
+        UpdateDownloads(config);
 
         RenderModMgr(config);
 
@@ -330,6 +333,7 @@ int main(int argc, char** argv)
 
     SaveModMgr(config);
     CleanupNXMAction(config);
+    CleanupMgr(config);
 
     // Cleanup
     ImGui_ImplOpenGL3_Shutdown();
@@ -338,6 +342,7 @@ int main(int argc, char** argv)
 
     glfwDestroyWindow(window);
     glfwTerminate();
+
 
     return 0;
 }

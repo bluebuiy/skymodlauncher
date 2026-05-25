@@ -91,6 +91,8 @@ void RenderModMgrSettings(ModMgr& mgr)
         ImGui::InputText("Config path", &mgr.config.configPath);
         ImGui::InputText("Instance path", &mgr.config.instPath);
         ImGui::Separator();
+        ImGui::InputText("Nexus API key", &mgr.config.nexusApiKey, ImGuiInputTextFlags_Password);
+        ImGui::Separator();
         
         if (ImGui::CollapsingHeader("Custom Variables"))
         {
@@ -341,6 +343,83 @@ void RenderTools(ModMgr& mgr)
     }
 }
 
+void RenderModDownloads(ModMgr& mgr)
+{
+    if (ImGui::Begin("Downloads"))
+    {
+        for (int i = 0; i < mgr.downloadSessions.size(); ++i)
+        {
+            ImGui::PushID(mgr.downloadSessions[i].fileId);
+
+            ImGui::PushStyleColor(ImGuiCol_Button, DELETE_COLOR);
+            if (ImGui::Button("X"))
+            {
+                mgr.downloadSessions[i].remove = true;
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("||"))
+            {
+                mgr.downloadSessions[i].pause = true;
+            }
+            ImGui::PopStyleColor(1);
+            ImGui::SameLine();
+            char const * state = "Unknown";
+            switch(mgr.downloadSessions[i].state)
+            {
+                case ModDlState::UrlQuery:
+                {
+                    state = "Fetching Info";
+                    break;
+                }
+                case ModDlState::Error:
+                {
+                    state = "Error";
+                    break;
+                }
+                case ModDlState::ModDownload:
+                {
+                    state = "Downloading";
+                    break;
+                }
+                case ModDlState::ModPaused:
+                {
+                    state = "Paused";
+                    break;
+                }
+                case ModDlState::Canceled:
+                {
+                    state = "Canceled";
+                    break;
+                }
+                case ModDlState::Complete:
+                {
+                    state = "Complete";
+                    break;
+                }
+            }
+            ImGui::Text("%-16s", state);
+            ImGui::SameLine();
+            ImGui::Text(" %64s ", mgr.downloadSessions[i].fileName.c_str());
+            ImGui::SameLine();
+            bool doQuickInstall = ImGui::Button("Quick Install");
+            ImGui::SameLine();
+            ImGui::Text(" ? ");
+            if (ImGui::BeginItemTooltip())
+            {
+                ImGui::Text("Unzips files into /Data, so that they are effectively at ${GAME_ROOT_DIR}/Data");
+                ImGui::EndTooltip();
+            }
+            if (doQuickInstall)
+            {
+                // noop for now
+            }
+
+            ImGui::PopID();
+        }
+    }
+    ImGui::End();
+}
+
 void RenderModMgr(ModMgr& mgr)
 {
     RenderTestUi(mgr);
@@ -468,6 +547,7 @@ void RenderModMgr(ModMgr& mgr)
     ImGui::End();
 
     RenderPluginsList(mgr);
+    RenderModDownloads(mgr);
 
     if (mgr.makingNewMod)
     {

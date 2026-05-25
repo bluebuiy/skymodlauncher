@@ -34,6 +34,8 @@ struct ModMgrConfig
 
     // not saved - instance project dir
     std::filesystem::path projectDir;
+
+    std::string nexusApiKey;
 };
 
 struct ModExec
@@ -79,10 +81,38 @@ struct ModMgrInst
     std::vector<CustomVariable> customVariables;
 };
 
-struct ModDownload
+enum class ModDlState
+{
+    None = 0,
+    UrlQuery,
+    ModDownload,
+    ModPaused,
+    Error,
+    Complete,
+    Canceled,
+};
+
+struct ModDownloadRt
 {
     CURL* dl = nullptr;
-    std::filesystem::path file;
+    std::unique_ptr<std::string> modUrlInfo;
+    FILE* modFile = nullptr;
+    curl_slist* headers = nullptr;
+    std::filesystem::path outFile;
+    std::string game;
+    std::string fileName;
+    int modId;
+    int fileId;
+    std::string expires;
+    std::string key;
+    //std::string userId;
+    // 1 : fetching download urls
+    // 2 : downloading the mod file
+    // 3 : paused on mod file
+    ModDlState state = ModDlState::None;
+    bool remove = false;
+    bool cancel = false;
+    bool pause = false;
 };
 
 struct ModMgr
@@ -117,6 +147,9 @@ struct ModMgr
 
     int urlPipe = -1;
 
+    CURLM* curlMulti = nullptr;
+    std::vector<ModDownloadRt> downloadSessions;
+
 };
 
 struct ExecToolProgram : public ProcInvoke
@@ -150,6 +183,13 @@ std::optional<std::string> DetectAppDataLocal(ModMgr& mgr);
 void CheckNXMAction(ModMgr& mgr);
 void SetupNXMActionPipe(ModMgr& mgr);
 void CleanupNXMAction(ModMgr& mgr);
+void StartNXMModDownload(ModMgr& mgr, std::string const & url);
+
+void UpdateDownloads(ModMgr& mgr);
+
+void InitMgr(ModMgr& mgr);
+void CleanupMgr(ModMgr& mgr);
+
 
 #include "modmgr_json.h"
 

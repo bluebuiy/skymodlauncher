@@ -35,6 +35,7 @@ namespace nlohmann
         JPUT(j, cfg, modFolder);
         JPUT(j, cfg, instPath);
         JPUT(j, cfg, appData);
+        JPUT(j, cfg, nexusApiKey);
     }
     
     void adl_serializer<ModMgrConfig>::from_json(json const & j, ModMgrConfig & cfg)
@@ -45,6 +46,7 @@ namespace nlohmann
         JPULL(j, cfg, modFolder);
         JPULL(j, cfg, instPath);
         JPULL(j, cfg, appData);
+        JPULL(j, cfg, nexusApiKey);
     }
 
 
