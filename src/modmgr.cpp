@@ -796,6 +796,16 @@ void UpdateDownloads(ModMgr& mgr)
             curl_easy_pause(dl.dl, 0);
             dl.state == ModDlState::ModPaused;
         }
+
+        if (dl.remove)
+        {
+            std::string path = std::format("{}/download/{}", *WordExpand(mgr.config.projectDir), dl.fileName);
+            std::cout << "Unlink: " << path << std::endl;
+            if (unlink(path.c_str()))
+            {
+                std::cout << errno << std::endl;
+            }
+        }
     }
 
     auto remStart = std::remove_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [](ModDownloadRt const & dl)
