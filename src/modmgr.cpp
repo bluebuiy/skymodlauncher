@@ -109,6 +109,27 @@ void DiscoverPlugins(ModMgr& mgr)
     }
 }
 
+ModDownload MdFromRt(ModDownloadRt const & mdrt)
+{
+    ModDownload ret;
+    ret.fileName = mdrt.fileName;
+    ret.fileId = mdrt.fileId;
+    ret.modId = mdrt.modId;
+    ret.game = mdrt.game;
+    return ret;
+}
+
+ModDownloadRt MdrtFromMd(ModDownload& md)
+{
+    ModDownloadRt ret;
+    ret.fileName = std::move(md.fileName);
+    ret.fileId = md.fileId;
+    ret.modId = md.modId;
+    ret.game = std::move(md.game);
+    ret.state = ModDlState::Complete;
+    return ret;
+}
+
 void SaveModMgr(ModMgr& mgr)
 {
     if (mgr.config.configPath.empty())
@@ -139,6 +160,15 @@ void SaveModMgr(ModMgr& mgr)
     {
         std::cout << "Failed to open instance file to save instance" << std::endl;
         return;
+    }
+
+    mgr.inst.downloads.clear();
+    for (auto&& mdrt : mgr.downloadSessions)
+    {
+        if (mdrt.state == ModDlState::Complete)
+        {
+            mgr.inst.downloads.emplace_back(MdFromRt(mdrt));
+        }
     }
 
     instfile << nlohmann::json(mgr.inst);
@@ -187,6 +217,15 @@ void LoadBuiltinTools(ModMgr& mgr)
     skse.execPath = "${WINE_CMD}";
     
     skse.args = {sksePath};
+}
+
+void CorrectLoadIndexes(ModMgr& mgr)
+{
+    std::sort(mgr.inst.mods.begin(), mgr.inst.mods.end(), [](ModInfo const & a, ModInfo const & b){return a.loadIndex < b.loadIndex;});
+    for (int i = 0; i < mgr.inst.mods.size(); ++i)
+    {
+        mgr.inst.mods[i].loadIndex = i;
+    }
 }
 
 bool LoadModMgr(ModMgr& mgr, std::string const& filePath, bool createNew)
@@ -272,6 +311,11 @@ bool LoadModMgr(ModMgr& mgr, std::string const& filePath, bool createNew)
             {
                 std::cout << "Instance version mismatch, terminating." << std::endl;
                 exit(1);
+            }
+            CorrectLoadIndexes(mgr);
+            for (auto&& md : mgr.inst.downloads)
+            {
+                mgr.downloadSessions.emplace_back(MdrtFromMd(md));
             }
         }
         DiscoverPlugins(mgr);
@@ -793,8 +837,13 @@ void UpdateDownloads(ModMgr& mgr)
         }
         else if (dl.pause && dl.state == ModDlState::ModDownload)
         {
-            curl_easy_pause(dl.dl, 0);
-            dl.state == ModDlState::ModPaused;
+            curl_easy_pause(dl.dl, CURLPAUSE_RECV);
+            dl.state = ModDlState::ModPaused;
+        }
+        else if (dl.unpause && dl.state == ModDlState::ModPaused)
+        {
+            curl_easy_pause(dl.dl, CURLPAUSE_CONT);
+            dl.state = ModDlState::ModDownload;
         }
 
         if (dl.remove)
@@ -806,6 +855,11 @@ void UpdateDownloads(ModMgr& mgr)
                 std::cout << errno << std::endl;
             }
         }
+
+        dl.remove = false;
+        dl.cancel = false;
+        dl.pause = false;
+        dl.unpause = false;
     }
 
     auto remStart = std::remove_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [](ModDownloadRt const & dl)
@@ -997,11 +1051,84 @@ void UpdateDownloads(ModMgr& mgr)
         }
     }
 
-
-
 }
 
 
+void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
+{
+    auto dl = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & dlr)
+    {
+        return dlr.fileName == modName;
+    });
+
+    if (dl == mgr.downloadSessions.end())
+    {
+        return;
+    }
+
+    // check filetype
+
+    // --print0 is not working, but it works from terminal.  I checked the output from the pipe directly.
+    std::vector<std::string> args = {
+        "/usr/bin/file",
+        // "-0",
+        "-b",
+        "--mime-type",
+        std::format("{}/download/{}", *WordExpand(mgr.config.projectDir), dl->fileName)
+    };
+
+    auto out = LaunchProcForOutput(args, "/");
+    if (!out)
+    {
+        std::cout << "Failed to determine file type" << std::endl;
+        return;
+    }
+
+    std::vector<std::string> extractCmd;
+    std::string type = *out;
+
+    std::string fileRaw = std::filesystem::path(modName).stem();
+
+    if (type == "application/x-7z-compressed\n")
+    {
+        // 7z creates missing directories
+        extractCmd = {
+            "/usr/bin/7z",
+            "x",
+            std::format("-o{}/{}/Data/", *WordExpand(mgr.config.modFolder), fileRaw),
+            std::format("{}/download/{}", *WordExpand(mgr.config.projectDir), modName)
+        };
+    }
+    else if (type == "application/zip\n")
+    {
+        // unzip creates missing directories
+        extractCmd = {
+            "/usr/bin/unzip",
+            "-d",
+            std::format("{}/{}/Data/", *WordExpand(mgr.config.modFolder), fileRaw),
+            std::format("{}/download/{}", *WordExpand(mgr.config.projectDir), modName)
+        };
+    }
+    else
+    {
+        std::cout << "Unknown file type: " << type << std::endl;
+        return;
+    }
+
+    if (!LaunchProc(extractCmd, "/"))
+    {
+        std::cout << "Failed to extract mod contents, check output above." << std::endl;
+        return;
+    }
+
+    // create the mod entry
+    auto& mod = mgr.inst.mods.emplace_back();
+    mod.enabled = true;
+    mod.loadIndex = mgr.inst.mods.size() - 1;
+    mod.modFile = fileRaw;
+
+    SaveModMgr(mgr);
+}
 
 void InitMgr(ModMgr& mgr)
 {

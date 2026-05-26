@@ -49,7 +49,6 @@ namespace nlohmann
         JPULL(j, cfg, nexusApiKey);
     }
 
-
     void adl_serializer<ModMgrInst>::to_json(json& j, ModMgrInst const & mi)
     {
         j["version"] = ModMgrInst::VERSION;
@@ -57,6 +56,7 @@ namespace nlohmann
         JPUT(j, mi, customExec);
         JPUT(j, mi, pluginList);
         JPUT(j, mi, customVariables);
+        JPUT(j, mi, downloads);
     }
 
     void adl_serializer<ModMgrInst>::from_json(json const & j, ModMgrInst& mi)
@@ -66,6 +66,7 @@ namespace nlohmann
         JPULL(j, mi, customExec);
         JPULL(j, mi, pluginList);
         JPULL(j, mi, customVariables);
+        JPULL(j, mi, downloads);
     }
     
     void adl_serializer<ModExec>::to_json(json& j, ModExec const & me)
@@ -83,7 +84,6 @@ namespace nlohmann
         JPULL(j, me, args);
         JPULL(j, me, updatePluginList);
     }
-
 
     void adl_serializer<ModPlugin>::to_json(json& j, ModPlugin const & mp)
     {
@@ -109,5 +109,20 @@ namespace nlohmann
         JPULL(j, cv, value);
     }
 
+    void adl_serializer<ModDownload>::to_json(json& j, ModDownload const & md)
+    {
+        JPUT(j, md, fileName);
+        JPUT(j, md, modId);
+        JPUT(j, md, fileId);
+        JPUT(j, md, game);
+    }
+
+    void adl_serializer<ModDownload>::from_json(json const & j, ModDownload& md)
+    {
+        JPULL(j, md, fileName);
+        JPULL(j, md, modId);
+        JPULL(j, md, fileId);
+        JPULL(j, md, game);
+    }
 }
 

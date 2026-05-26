@@ -69,6 +69,14 @@ struct CustomVariable
     std::string value;
 };
 
+struct ModDownload
+{
+    std::string fileName;
+    int modId;
+    int fileId;
+    std::string game;
+};
+
 struct ModMgrInst
 {
     static constexpr int VERSION = 1;
@@ -79,6 +87,7 @@ struct ModMgrInst
     std::vector<ModExec> builtinExec;
     std::vector<ModPlugin> pluginList;
     std::vector<CustomVariable> customVariables;
+    std::vector<ModDownload> downloads;
 };
 
 enum class ModDlState
@@ -113,6 +122,7 @@ struct ModDownloadRt
     bool remove = false;
     bool cancel = false;
     bool pause = false;
+    bool unpause = false;
 };
 
 struct ModMgr
@@ -186,6 +196,8 @@ void CleanupNXMAction(ModMgr& mgr);
 void StartNXMModDownload(ModMgr& mgr, std::string const & url);
 
 void UpdateDownloads(ModMgr& mgr);
+
+void InstallDownloadedFile(ModMgr& mgr, std::string const & modName);
 
 void InitMgr(ModMgr& mgr);
 void CleanupMgr(ModMgr& mgr);

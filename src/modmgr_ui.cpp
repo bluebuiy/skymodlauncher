@@ -357,9 +357,19 @@ void RenderModDownloads(ModMgr& mgr)
                 mgr.downloadSessions[i].remove = true;
             }
             ImGui::SameLine();
-            if (ImGui::Button("||"))
+            if (mgr.downloadSessions[i].state == ModDlState::ModDownload)
             {
-                mgr.downloadSessions[i].pause = true;
+                if (ImGui::Button("||"))
+                {
+                    mgr.downloadSessions[i].pause = true;
+                }
+            }
+            else if (mgr.downloadSessions[i].state == ModDlState::ModPaused)
+            {
+                if (ImGui::Button(">"))
+                {
+                    mgr.downloadSessions[i].unpause = true;
+                }
             }
             ImGui::PopStyleColor(1);
             ImGui::SameLine();
@@ -411,7 +421,7 @@ void RenderModDownloads(ModMgr& mgr)
             }
             if (doQuickInstall)
             {
-                // noop for now
+                InstallDownloadedFile(mgr, mgr.downloadSessions[i].fileName);
             }
 
             ImGui::PopID();
