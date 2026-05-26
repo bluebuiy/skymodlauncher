@@ -197,6 +197,8 @@ void StartNXMModDownload(ModMgr& mgr, std::string const & url);
 
 void UpdateDownloads(ModMgr& mgr);
 
+void DeleteMod(ModMgr& mgr, std::string & modFile);
+
 void InstallDownloadedFile(ModMgr& mgr, std::string const & modName);
 
 void InitMgr(ModMgr& mgr);

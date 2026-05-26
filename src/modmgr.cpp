@@ -1130,6 +1130,20 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
     SaveModMgr(mgr);
 }
 
+
+
+void DeleteMod(ModMgr& mgr, std::string & modFile)
+{
+    std::filesystem::path path = std::filesystem::path(*WordExpand(mgr.config.modFolder)) / modFile;
+    
+    std::vector<std::string> args = {
+        "/usr/bin/rm",
+        "-r",
+        path
+    };
+    LaunchProc(args, "/");
+}
+
 void InitMgr(ModMgr& mgr)
 {
     curl_global_init(CURL_GLOBAL_ALL);

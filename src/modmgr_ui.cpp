@@ -10,6 +10,7 @@
 #include <filesystem>
 #include <unordered_set>
 
+constexpr auto WINDOW_ALIGN_FLAG = ImGuiCond_Always;
 constexpr ImVec4 DELETE_COLOR = ImVec4(0.7f,0.1f,0.1f,1.0f);
 
 void RenderTestUi(ModMgr& mgr)
@@ -58,6 +59,9 @@ void LaunchShell(ModMgr& mgr)
 
 void RenderNewModDialog(ModMgr& mgr)
 {
+    const auto dispSize = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetWorkCenter(), WINDOW_ALIGN_FLAG, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(300, 200), WINDOW_ALIGN_FLAG);
     if (ImGui::Begin("Add New Mod", &mgr.makingNewMod))
     {
         ImGui::InputText("Mod folder", &mgr.newMod.modFile);
@@ -81,7 +85,10 @@ void RenderNewModDialog(ModMgr& mgr)
 
 void RenderModMgrSettings(ModMgr& mgr)
 {
-    if (ImGui::Begin("Settings", &mgr.settingsOpen))
+    const auto dispSize = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetWorkCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(dispSize.x * 0.8f, dispSize.y * 0.6f), ImGuiCond_Always);
+    if (ImGui::Begin("Settings", &mgr.settingsOpen, ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize))
     {
         ImGui::InputText("Game Root", &mgr.config.installRoot);
         ImGui::InputText("My Games/Skyrim", &mgr.config.mgRoot);
@@ -143,14 +150,16 @@ void RenderModMgrSettings(ModMgr& mgr)
             }
 
         }
-
     }
     ImGui::End();
 }
 
 void RenderPluginsList(ModMgr& mgr)
 {
-    if (ImGui::Begin("Plugins"))
+    const auto dispSize = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(dispSize.x * 0.4f, 240 + 20), WINDOW_ALIGN_FLAG);
+    ImGui::SetNextWindowSize(ImVec2(dispSize.x * 0.2f, dispSize.y - 240 - 20), WINDOW_ALIGN_FLAG);
+    if (ImGui::Begin("Plugins", nullptr))
     {
         if (ImGui::Button("Refresh Plugins"))
         {
@@ -230,6 +239,9 @@ void RenderTools(ModMgr& mgr)
     ImGui::EndDisabled();
     if (mgr.addingExec || mgr.modifyingExec)
     {
+        const auto dispSize = ImGui::GetIO().DisplaySize;
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetWorkCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_Always);
         if (ImGui::Begin("Edit Exec"))
         {
             ImGui::Text("Name ");
@@ -345,6 +357,9 @@ void RenderTools(ModMgr& mgr)
 
 void RenderModDownloads(ModMgr& mgr)
 {
+    const auto dispSize = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(dispSize.x * 0.6f, 20), WINDOW_ALIGN_FLAG);
+    ImGui::SetNextWindowSize(ImVec2(dispSize.x * 0.4f, dispSize.y - 20), WINDOW_ALIGN_FLAG);
     if (ImGui::Begin("Downloads"))
     {
         for (int i = 0; i < mgr.downloadSessions.size(); ++i)
@@ -407,11 +422,20 @@ void RenderModDownloads(ModMgr& mgr)
                     break;
                 }
             }
-            ImGui::Text("%-16s", state);
+            ImGui::Text("%-14s ", state);
+            bool doQuickInstall = false;
+            if (mgr.downloadSessions[i].state == ModDlState::Complete)
+            {
+                ImGui::SameLine();
+                doQuickInstall = ImGui::Button("Install");
+                if (ImGui::BeginItemTooltip())
+                {
+                    ImGui::Text("Extracts mod contents directly to the mod directory");
+                    ImGui::EndTooltip();
+                }
+            }
             ImGui::SameLine();
-            ImGui::Text(" %64s ", mgr.downloadSessions[i].fileName.c_str());
-            ImGui::SameLine();
-            bool doQuickInstall = ImGui::Button("Quick Install");
+            ImGui::Text("%-64s", mgr.downloadSessions[i].fileName.c_str());
             ImGui::SameLine();
             ImGui::Text(" ? ");
             if (ImGui::BeginItemTooltip())
@@ -440,18 +464,32 @@ void RenderModMgr(ModMgr& mgr)
         {
             SaveModMgr(mgr);
         }
-        
-    }
-    ImGui::EndMainMenuBar();
-    
-    if (ImGui::Begin("Mod Manager"))
-    {
-        RenderTools(mgr);
 
         if (ImGui::Button("Settings"))
         {
             mgr.settingsOpen = true;
         }
+/*
+        if (ImGui::Button("Reset layout"))
+        {
+            // doesnt work
+            ImGui::ClearIniSettings();
+        }
+        if (ImGui::BeginItemTooltip())
+        {
+            ImGui::Text("Requires restart");
+            ImGui::EndTooltip();
+        }
+*/
+    }
+    ImGui::EndMainMenuBar();
+    
+    const auto dispSize = ImGui::GetIO().DisplaySize;
+    ImGui::SetNextWindowPos(ImVec2(dispSize.x * 0.4f, 20), WINDOW_ALIGN_FLAG);
+    ImGui::SetNextWindowSize(ImVec2(dispSize.x * 0.2f, 240), WINDOW_ALIGN_FLAG);
+    if (ImGui::Begin("Mod Manager"))
+    {
+        RenderTools(mgr);
 
         if (ImGui::Button("Add Mod"))
         {
@@ -467,9 +505,15 @@ void RenderModMgr(ModMgr& mgr)
         {
             mgr.sortMode = 1;
         }
-        ImGui::Checkbox("Enable mod removal (doesnt delete the mod folder)", &mgr.enableRemove);
-        ImGui::Text("Mod list");
-        ImGui::Separator();
+        ImGui::Checkbox("Enable mod removal", &mgr.enableRemove);
+    }
+
+    ImGui::End();
+
+    ImGui::SetNextWindowPos(ImVec2(0,20), WINDOW_ALIGN_FLAG);
+    ImGui::SetNextWindowSize(ImVec2(dispSize.x * 0.4f, dispSize.y - 20), WINDOW_ALIGN_FLAG);
+    if (ImGui::Begin("Mod List"))
+    {
         std::sort(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const & a, ModInfo const & b){
             if (mgr.sortMode == 0)
             {
@@ -508,22 +552,26 @@ void RenderModMgr(ModMgr& mgr)
                     mvDown = i;
                 }
                 ImGui::EndDisabled();
-                ImGui::SameLine();
-                
-                ImGui::Text("%-32s", mgr.inst.mods[i].modFile.c_str());
+
                 if (mgr.enableRemove)
                 {
                     ImGui::SameLine();
-                    if (ImGui::Button("Remove"))
+                    ImGui::PushStyleColor(ImGuiCol_Button, DELETE_COLOR);
+                    if (ImGui::Button("Delete"))
                     {
                         del = i;
                     }
+                    ImGui::PopStyleColor(1);
                 }
+                
+                ImGui::SameLine();
+                ImGui::Text("%-32s", mgr.inst.mods[i].modFile.c_str());
             ImGui::PopID();
         }
         ImGui::Separator();
         if (del != -1)
         {
+            DeleteMod(mgr, mgr.inst.mods[del].modFile);
             mgr.inst.mods.erase(mgr.inst.mods.begin() + del);
         }
         else if (mvUp != -1)
