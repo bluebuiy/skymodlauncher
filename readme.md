@@ -18,6 +18,11 @@ For example, using the supplied presets:
 
 then the executable will be at `out/ninja-release/skymodlaunch`.  For less technical users, you can copy the executable to the directory you want the mod setup in and running from there.  It will use the current directory.  Otherwise, you can pass it parameters to select the directory to use.
 
+## Downloading from Nexus
+Downloading mods from Nexus requires a bit of setup:
+ * Run install_nxm_handler.sh to install the nxm:// protocol handler.  root not required.
+ * Add an api key in the settings.  For now, use a personal key, located at the bottom of https://www.nexusmods.com/settings/api-keys. This will eventually use oauth2 to generate a key.
+
 ## Manually Installing Mods
 In the UI, create a mod.  The program will create a directory;  Copy the mod contents to the directory it created.  Unlike MO2, where mod folders are attached to `/Data`, mod folders are attached to the game's install root (ie the same directory that SkyrimSE.exe is located).  This means most mods need a Data directory in them, and things like SKSE can be added as a mod, instead of directly added to the game root.
 
