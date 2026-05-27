@@ -16,7 +16,7 @@ bool InitFomod(ModMgr & mgr, std::filesystem::path const & tmpDir, std::string c
         return false;
     }
 
-    std::filesystem::path fomdPath = mgr.config.projectDir / tmpDir / "Data" / "FOMod" / "ModuleConfig.xml";
+    std::filesystem::path fomdPath = mgr.config.projectDir / tmpDir / "FOMod" / "ModuleConfig.xml";
 
     auto ld = fomod::Load(fomdPath);
 
@@ -40,6 +40,7 @@ bool InitFomod(ModMgr & mgr, std::filesystem::path const & tmpDir, std::string c
     return true;
 }
 
+__attribute__((optimize("O0")))
 void RenderFomod(ModMgr& mgr)
 {
     if (!mgr.fomodState.has_value())
@@ -258,7 +259,7 @@ void RenderFomod(ModMgr& mgr)
                     "/usr/bin/mv",
                     "-n",
                     //"-v",
-                    mgr.config.projectDir / fomod.tmpDir / "Data" / action.from,
+                    mgr.config.projectDir / fomod.tmpDir / action.from,
                     prefix / action.to
                 };
                 if (!LaunchProc(mvCmd, "/"))
@@ -270,7 +271,7 @@ void RenderFomod(ModMgr& mgr)
             {
                 std::vector<std::string> findCmd = {
                     "/usr/bin/find",
-                    mgr.config.projectDir / fomod.tmpDir / "Data" / action.from,
+                    mgr.config.projectDir / fomod.tmpDir / action.from,
                     "-maxdepth",
                     "1",
                     "-mindepth",
@@ -282,7 +283,7 @@ void RenderFomod(ModMgr& mgr)
                 auto findRes = LaunchProcParsePrint0(findCmd, "/");
                 if (!findRes)
                 {
-                    std::cout << "!!!!!!!!!!! Failed to find files in " << mgr.config.projectDir / fomod.tmpDir / "Data" / action.from << std::endl;
+                    std::cout << "!!!!!!!!!!! Failed to find files in " << mgr.config.projectDir / fomod.tmpDir / action.from << std::endl;
                 }
                 else
                 {
@@ -301,25 +302,18 @@ void RenderFomod(ModMgr& mgr)
                             std::cout << "Failed to move a dir: " << action.from << std::endl;
                         }
                         // dont need to delete here, because the tmp folder is deleted later.
-                        #if 0
-                        std::vector<std::string> mvCmd = {
-                            "/usr/bin/mv",
-                            "-n",
-                            //"-v",
-                            p,
-                            "-t",
-                            prefix / action.to
-                        };
-                        if(!LaunchProc(mvCmd, "/"))
-                        {
-                            std::cout << "!!!!!!!!! Failed to move file: " << p << std::endl;
-                        }
-                        #endif
                     }
                 }
             }
         }
 
+        // create mod entry
+        auto& mod = mgr.inst.mods.emplace_back();
+        mod.enabled = true;
+        mod.loadIndex = mgr.inst.mods.size() - 1;
+        mod.modFile = fomod.modName;
+
+        // remove staging
         std::vector<std::string> rmCmd = {
             "/usr/bin/rm",
             "-r",
@@ -329,6 +323,8 @@ void RenderFomod(ModMgr& mgr)
         {
             std::cout << "Failed to delete fomod tmp dir: " << mgr.config.projectDir / fomod.tmpDir << std::endl;
         }
+
+        DiscoverPlugins(mgr);
 
         mgr.fomodState.reset();
         ImGui::CloseCurrentPopup();

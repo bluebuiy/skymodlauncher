@@ -1074,7 +1074,7 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
 
     // check filetype
 
-    // --print0 is not working, but it works from terminal.  I checked the output from the pipe directly.
+    // --print0 is not working
     std::vector<std::string> args = {
         "/usr/bin/file",
         // "-0",
@@ -1090,6 +1090,7 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
         return;
     }
 
+    std::filesystem::path staging = mgr.config.projectDir / ".mod_staging";
     std::vector<std::string> extractCmd;
     std::string type = *out;
 
@@ -1101,8 +1102,8 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
         extractCmd = {
             "/usr/bin/7z",
             "x",
-            std::format("-o{}/{}/Data/", *WordExpand(mgr.config.modFolder), fileStem),
-            std::format("{}/download/{}", *WordExpand(mgr.config.projectDir), modName)
+            std::format("-o{}", std::string(staging / fileStem)),
+            mgr.config.projectDir / "download" / modName
         };
     }
     else if (type == "application/zip\n")
@@ -1111,8 +1112,8 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
         extractCmd = {
             "/usr/bin/unzip",
             "-d",
-            std::format("{}/{}/Data/", *WordExpand(mgr.config.modFolder), fileStem),
-            std::format("{}/download/{}", *WordExpand(mgr.config.projectDir), modName)
+            staging / fileStem,
+            mgr.config.projectDir / "download" / modName
         };
     }
     else
@@ -1127,31 +1128,45 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
         return;
     }
 
-    // create the mod entry
-    auto& mod = mgr.inst.mods.emplace_back();
-    mod.enabled = true;
-    mod.loadIndex = mgr.inst.mods.size() - 1;
-    mod.modFile = fileStem;
+    bool isFomod = false;
 
     // check if there's a fomod
     {
-        std::filesystem::path projDir(*WordExpand(mgr.config.projectDir));
-        std::filesystem::path modFolder = *WordExpand(mgr.config.modFolder);
-        std::filesystem::path tmpDir = projDir / "fomod_tmp" / fileStem;
-        std::filesystem::path fomod_test = modFolder / fileStem / "Data" / "FOMod";
+        std::filesystem::path fomod_test = staging / fileStem / "FOMod";
         if (std::filesystem::is_directory(fomod_test) & std::filesystem::is_regular_file(fomod_test / "ModuleConfig.xml"))
         {
-            std::filesystem::create_directories(tmpDir);
-            // move mod contents to a temporary holding directory
-            std::vector<std::string> mvCmd = {"/usr/bin/mv", std::string(modFolder / fileStem / "Data"), tmpDir};
-            LaunchProc(mvCmd, "/");
-            // now mod/Data is at proj/fomod_tmp/mod/Data/
             // initialize fomod
-            InitFomod(mgr, std::filesystem::path() / "fomod_tmp" / fileStem, fileStem);
+            isFomod = true;
+            InitFomod(mgr, staging / fileStem, fileStem);
         }
     }
 
-    SaveModMgr(mgr);
+    if (!isFomod)
+    {
+        // otherwise create the mod entry and move mod into it
+        auto& mod = mgr.inst.mods.emplace_back();
+        mod.enabled = true;
+        mod.loadIndex = mgr.inst.mods.size() - 1;
+        mod.modFile = fileStem;
+
+        std::filesystem::path modFolder = *WordExpand(mgr.config.modFolder);
+        std::filesystem::create_directories(modFolder / fileStem);
+        std::vector<std::string> mv = {
+            "/usr/bin/mv",
+            staging / fileStem,
+            "-T",
+            modFolder / fileStem / "Data"
+        };
+        if (!LaunchProc(mv, "/"))
+        {
+            std::cout << "Failed to install mod files to " << modFolder / fileStem << std::endl;
+        }
+
+        DiscoverPlugins(mgr);
+        
+        SaveModMgr(mgr);
+    }
+
 }
 
 
