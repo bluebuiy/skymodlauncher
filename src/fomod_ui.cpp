@@ -40,7 +40,6 @@ bool InitFomod(ModMgr & mgr, std::filesystem::path const & tmpDir, std::string c
     return true;
 }
 
-__attribute__((optimize("O0")))
 void RenderFomod(ModMgr& mgr)
 {
     if (!mgr.fomodState.has_value())
