@@ -671,16 +671,19 @@ InstallActions GetInstallActions(Fomod const & m, Eval const & eval, SubstepInfo
         for (int j = 0; j < installStep.subSteps.size(); ++j)
         {
             auto& subStep = installStep.subSteps[j];
-            for (auto&& index : eval.stepCache[i].substeps[j].choices.values)
+            if (!eval.stepCache[i].substeps.empty())
             {
-                auto& opt = subStep.selections[index];
-                for (auto&& action : opt.files)
+                for (auto&& index : eval.stepCache[i].substeps[j].choices.values)
                 {
-                    auto& act = ret.actions.emplace_back();
-                    act.action = action.action;
-                    act.from = action.source;
-                    act.to = action.destination;
-                    act.priority = action.priority;
+                    auto& opt = subStep.selections[index];
+                    for (auto&& action : opt.files)
+                    {
+                        auto& act = ret.actions.emplace_back();
+                        act.action = action.action;
+                        act.from = action.source;
+                        act.to = action.destination;
+                        act.priority = action.priority;
+                    }
                 }
             }
         }
