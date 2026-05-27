@@ -23,6 +23,9 @@ std::optional<std::string> LaunchProcForOutput(std::vector<std::string> & cmd, s
 
 bool LaunchProc(std::vector<std::string> & cmd, std::string const & wd);
 
+
+std::optional<std::vector<std::string>> LaunchProcParsePrint0(std::vector<std::string> & cmd, std::string const & wd);
+
 struct ProcInvoke
 {
     virtual ~ProcInvoke() = default;

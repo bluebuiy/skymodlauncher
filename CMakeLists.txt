@@ -16,7 +16,13 @@ FetchContent_Declare(
     GIT_TAG 3.4
 )
 
-FetchContent_MakeAvailable(glfw)
+FetchContent_Declare(
+    pugixml
+    GIT_REPOSITORY https://github.com/zeux/pugixml.git
+    GIT_TAG v1.15
+)
+
+FetchContent_MakeAvailable(glfw pugixml)
 
 add_executable(skymodlaunch)
 
@@ -59,12 +65,17 @@ target_sources(skymodlaunch
         src/prochelper.cpp
         src/prochelper.h
         src/procex.cpp
+        src/fomod.cpp
+        src/fomod.h
+        src/fomod_ui.h
+        src/fomod_ui.cpp
 )
 
 target_link_libraries(skymodlaunch
     PRIVATE
         glfw
         curl
+        pugixml
 )
 
 target_compile_options(skymodlaunch

@@ -2,11 +2,13 @@
 #pragma once
 
 #include "prochelper.h"
+#include "fomod_ui.h"
 
 #include <vector>
 #include <string>
 #include <filesystem>
 #include <curl/curl.h>
+
 
 struct ModMgrConfig
 {
@@ -115,9 +117,6 @@ struct ModDownloadRt
     std::string expires;
     std::string key;
     //std::string userId;
-    // 1 : fetching download urls
-    // 2 : downloading the mod file
-    // 3 : paused on mod file
     ModDlState state = ModDlState::None;
     bool remove = false;
     bool cancel = false;
@@ -152,6 +151,8 @@ struct ModMgr
     bool settingsOpen = false;
     bool foundSkyrimExe = false;
     bool foundSkyrimIni = false;
+
+    std::optional<FomodUI> fomodState;
 
     // 
 

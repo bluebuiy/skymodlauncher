@@ -606,6 +606,7 @@ void RenderModMgr(ModMgr& mgr)
 
     RenderPluginsList(mgr);
     RenderModDownloads(mgr);
+    RenderFomod(mgr);
 
     if (mgr.makingNewMod)
     {

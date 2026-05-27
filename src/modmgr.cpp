@@ -1,5 +1,6 @@
 
 #include "modmgr.h"
+#include "fomod_ui.h"
 
 #include <fstream>
 #include <iostream>
@@ -1056,6 +1057,11 @@ void UpdateDownloads(ModMgr& mgr)
 
 void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
 {
+    if (mgr.fomodState.has_value())
+    {
+        return;
+    }
+
     auto dl = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & dlr)
     {
         return dlr.fileName == modName;
@@ -1087,7 +1093,7 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
     std::vector<std::string> extractCmd;
     std::string type = *out;
 
-    std::string fileRaw = std::filesystem::path(modName).stem();
+    std::string fileStem = std::filesystem::path(modName).stem();
 
     if (type == "application/x-7z-compressed\n")
     {
@@ -1095,7 +1101,7 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
         extractCmd = {
             "/usr/bin/7z",
             "x",
-            std::format("-o{}/{}/Data/", *WordExpand(mgr.config.modFolder), fileRaw),
+            std::format("-o{}/{}/Data/", *WordExpand(mgr.config.modFolder), fileStem),
             std::format("{}/download/{}", *WordExpand(mgr.config.projectDir), modName)
         };
     }
@@ -1105,7 +1111,7 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
         extractCmd = {
             "/usr/bin/unzip",
             "-d",
-            std::format("{}/{}/Data/", *WordExpand(mgr.config.modFolder), fileRaw),
+            std::format("{}/{}/Data/", *WordExpand(mgr.config.modFolder), fileStem),
             std::format("{}/download/{}", *WordExpand(mgr.config.projectDir), modName)
         };
     }
@@ -1125,7 +1131,25 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
     auto& mod = mgr.inst.mods.emplace_back();
     mod.enabled = true;
     mod.loadIndex = mgr.inst.mods.size() - 1;
-    mod.modFile = fileRaw;
+    mod.modFile = fileStem;
+
+    // check if there's a fomod
+    {
+        std::filesystem::path projDir(*WordExpand(mgr.config.projectDir));
+        std::filesystem::path modFolder = *WordExpand(mgr.config.modFolder);
+        std::filesystem::path tmpDir = projDir / "fomod_tmp" / fileStem;
+        std::filesystem::path fomod_test = modFolder / fileStem / "Data" / "FOMod";
+        if (std::filesystem::is_directory(fomod_test) & std::filesystem::is_regular_file(fomod_test / "ModuleConfig.xml"))
+        {
+            std::filesystem::create_directories(tmpDir);
+            // move mod contents to a temporary holding directory
+            std::vector<std::string> mvCmd = {"/usr/bin/mv", std::string(modFolder / fileStem / "Data"), tmpDir};
+            LaunchProc(mvCmd, "/");
+            // now mod/Data is at proj/fomod_tmp/mod/Data/
+            // initialize fomod
+            InitFomod(mgr, std::filesystem::path() / "fomod_tmp" / fileStem, fileStem);
+        }
+    }
 
     SaveModMgr(mgr);
 }

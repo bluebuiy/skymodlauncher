@@ -259,18 +259,114 @@ std::optional<std::string> LaunchProcForOutput(std::vector<std::string> & cmd, s
             else if (s == -1)
             {
                 std::cout << "Error reading pipe" << std::endl;
+                close(ppp[0]);
+                return {};
             }
             else
             {
                 output.insert(output.end(), buf, buf + s);
             }
         }
-        std::cout << output << std::endl;
+        //std::cout << output << std::endl;
         return output;
     }
     return {};
 }
 
+std::optional<std::vector<std::string>> LaunchProcParsePrint0(std::vector<std::string> & cmd, std::string const & wd)
+{
+    if (cmd.empty() || cmd[0].empty())
+    {
+        std::cout << "Tried to execute \"\"" << std::endl;
+        return {};
+    }
+
+    std::cout << "Executing proc: " << cmd[0] << std::endl;
+    int ppp[2];
+    if (pipe(ppp) < 0)
+    {
+        std::cout << "Failed to create pipe for child output" << std::endl;
+        return {};
+    }
+
+    std::vector<char *> args;
+    for (int i = 0; i < cmd.size(); ++i)
+    {
+        args.push_back(cmd[i].data());
+    }
+    args.push_back(nullptr);
+
+    int pid = fork();
+
+    if (pid == -1)
+    {
+        return {};
+    }
+    else if (pid == 0)
+    {
+        // child
+        close(ppp[0]);
+        dup2(ppp[1], STDOUT_FILENO);
+        int cd = chdir(wd.c_str());
+        if (cd == 0)
+        {
+            if (!execv(cmd[0].data(), args.data()))
+            {
+                exit(1);
+            }
+        }
+        else
+        {
+            exit(1);
+        }
+        exit(1);
+    }
+    else
+    {
+        close(ppp[1]);
+        // parent
+        std::vector<std::string> output;
+        std::string strBuf;
+
+        char buf[1024];
+        while (true)
+        {
+            ssize_t s = read(ppp[0], buf, sizeof(buf));
+            if (s == 0)
+            {
+                break;
+            }
+            else if (s == -1)
+            {
+                std::cout << "Error reading pipe" << std::endl;
+                close(ppp[0]);
+                return {};
+            }
+            else
+            {
+                for (ssize_t i = 0; i < s; ++i)
+                {
+                    if (buf[i] == 0)
+                    {
+                        std::cout << strBuf << std::endl;
+                        output.emplace_back(std::move(strBuf));
+                        strBuf.clear();
+                    }
+                    else
+                    {
+                        strBuf.push_back(buf[i]);
+                    }
+                }
+            }
+        }
+        if (strBuf.size())
+        {
+            output.emplace_back(std::move(strBuf));
+        }
+        return output;
+    }
+    return {};
+}
 
 bool ForkInvoke(ProcInvoke * invoke)
 {
