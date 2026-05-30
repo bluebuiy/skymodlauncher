@@ -3,6 +3,7 @@
 
 
 #include "asyncengine.h"
+#include "filewrapper.h"
 #include <curl/curl.h>
 #include <unordered_map>
 #include <mutex>
@@ -16,49 +17,10 @@ typedef void CURLM;
 struct curl_slist;
 
 
-struct CurlFileWrapper
-{
-    CurlFileWrapper() 
-        : f(nullptr)
-    {}
-    CurlFileWrapper(FILE* f)
-        : f(f)
-    {}
-    CurlFileWrapper(CurlFileWrapper&& o)
-    {
-        f = o.f;
-        o.f = nullptr;
-    }
-    CurlFileWrapper& operator=(CurlFileWrapper&& o)
-    {
-        destroy();
-        f = o.f;
-        o.f = nullptr;
-        return *this;
-    }
-    FILE* f = nullptr;
-
-    void destroy()
-    {
-        fclose(f);
-        f = nullptr;
-    }
-
-    ~CurlFileWrapper()
-    {
-        destroy();
-    }
-
-    operator FILE*() const
-    {
-        return f;
-    }
-};
-
 struct CurlEasyTaskResult
 {
     std::string data;
-    CurlFileWrapper file;
+    FileWrapper file;
     int httpCode = 0;
     CURLMcode mError = CURLMcode::CURLM_OK;
     CURLcode cError = CURLcode::CURLE_OK;
@@ -76,16 +38,23 @@ struct CurlEasyTask : public AsyncTask<CurlEasyTaskResult, CurlAsyncEngine>
     curl_slist* headers = nullptr;
     curl_mime* postData = nullptr;
     curl_mimepart* part = nullptr;
-    CurlFileWrapper file;
+    FileWrapper file;
     std::string outStr;
     HttpType type;
     std::string postDataStr;
-
+    
+    // internal functions
     CurlEasyTask();
     ~CurlEasyTask();
     void Start(CurlAsyncEngine &);
     void Stop(CurlAsyncEngine &);
     void OnFinish(CurlAsyncEngine & , CurlEasyTaskResult& outResult);
+
+    void SetUrl(char const * url);
+    void SetHeader(std::string const & name, std::string const & value);
+    void ClearHeaders();
+
+    // progress queries
 };
 
 
@@ -109,4 +78,6 @@ public:
     void update(ProcessorUpdate<CurlAsyncEngine> & result);
 
 };
+
+using CurlTask = AsyncTaskRef<CurlAsyncEngine, CurlEasyTask>;
 

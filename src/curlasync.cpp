@@ -1,5 +1,8 @@
 
+
 #include "curlasync.h"
+
+#include <format>
 
 
 CurlEasyTask::CurlEasyTask()
@@ -91,6 +94,23 @@ void CurlEasyTask::OnFinish(CurlAsyncEngine & env, CurlEasyTaskResult& result)
     result.file = std::move(file);
 
     curl_easy_getinfo(ez, CURLINFO_RESPONSE_CODE, &result.httpCode);
+}
+
+void CurlEasyTask::SetUrl(char const * url)
+{
+    curl_easy_setopt(ez, CURLOPT_URL, url);
+}
+
+void CurlEasyTask::SetHeader(std::string const & name, std::string const & value)
+{
+    std::string full = std::format("{}: {}", name, value);
+    curl_slist_append(headers, full.c_str());
+}
+
+void CurlEasyTask::ClearHeaders()
+{
+    curl_slist_free_all(headers);
+    headers = nullptr;
 }
 
 CurlAsyncEngine::CurlAsyncEngine()

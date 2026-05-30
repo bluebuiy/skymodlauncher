@@ -183,10 +183,10 @@ public:
 };
 
 template <typename T, typename Data>
-auto CreateTask(Data && taskData) -> AsyncTaskRef<T, typename T::TaskEnv>
+auto CreateTask(Data && taskData) -> AsyncTaskRef<typename T::TaskEnv, T>
 {
-    AsyncTaskRef<T, typename T::TaskEnv> tr;
-    tr.task->onCompleteCb = std::move(taskData);
+    AsyncTaskRef<typename T::TaskEnv, T> tr;
+    tr.task->finishedCb = std::move(taskData);
     return tr;
 }
 
