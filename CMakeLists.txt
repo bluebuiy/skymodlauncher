@@ -69,6 +69,9 @@ target_sources(skymodlaunch
         src/fomod.h
         src/fomod_ui.h
         src/fomod_ui.cpp
+        src/asyncengine.h
+        src/curlasync.h
+        src/curlasync.cpp
 )
 
 target_link_libraries(skymodlaunch
