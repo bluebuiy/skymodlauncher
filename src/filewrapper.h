@@ -27,7 +27,10 @@ struct FileWrapper
 
     void destroy()
     {
-        fclose(f);
+        if (f)
+        {
+            fclose(f);
+        }
         f = nullptr;
     }
 

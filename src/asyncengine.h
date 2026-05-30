@@ -7,7 +7,7 @@
 #include <mutex>
 #include <atomic>
 
-std::lock_guard<std::mutex> do_lock(std::mutex& m)
+inline std::lock_guard<std::mutex> do_lock(std::mutex& m)
 {
     return std::lock_guard(m);
 }
@@ -69,7 +69,7 @@ public:
 
     void Start(std::shared_ptr<AsyncTaskProcessor<TE>> const & env)
     {
-        if (task->started.compare_exchange_strong(false, true))
+        if (task)
         {
             task->env = env;
             env->BeginTask(task);
@@ -77,9 +77,9 @@ public:
     }
     void Stop()
     {
-        if (task->started.compare_exchange_strong(true, false))
+        if (task && task->env)
         {
-            this->env->CancelTask(task);
+            task->env->CancelTask(task);
         }
     }
 
@@ -107,7 +107,7 @@ private:
     bool AddTask(Task const & task)
     {
         auto it = std::find(taskList.begin(), taskList.end(), task);
-        if (it != taskList.end())
+        if (it == taskList.end())
         {
             taskList.emplace_back(task);
             return true;
@@ -132,10 +132,14 @@ public:
         bool canAdd = false;
         {
             auto __lg = do_lock(mt);
-            canAdd = AddTask(task);
-            if (canAdd)
+            if (!task->started)
             {
-                task->Start(env);
+                canAdd = AddTask(task);
+                if (canAdd)
+                {
+                    task->started = true;
+                    task->Start(env);
+                }
             }
         }
     }
@@ -145,12 +149,13 @@ public:
         bool canRm = false;
         {
             auto __lg = do_lock(mt);
-            canRm = RemoveTask(task);
-            if (canRm)
+            if (task->started)
             {
-                // problem with this is if canceling can't happen immediately then it will stall
-                // problem for another time
-                task->Stop(env);
+                canRm = RemoveTask(task);
+                if (canRm)
+                {
+                    task->Stop(env);
+                }
             }
         }
         if (canRm)
@@ -163,9 +168,9 @@ public:
     void Update()
     {
         ProcessorUpdate<TE> result;
-        auto _ = do_lock(mt);
         {
-            update(result);
+            auto _ = do_lock(mt);
+            env.update(result);
             for (auto&& task : result.completedTaskList)
             {
                 RemoveTask(task);
@@ -186,6 +191,7 @@ template <typename T, typename Data>
 auto CreateTask(Data && taskData) -> AsyncTaskRef<typename T::TaskEnv, T>
 {
     AsyncTaskRef<typename T::TaskEnv, T> tr;
+    tr.task = std::make_shared<T>();
     tr.task->finishedCb = std::move(taskData);
     return tr;
 }

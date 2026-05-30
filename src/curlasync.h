@@ -24,6 +24,7 @@ struct CurlEasyTaskResult
     int httpCode = 0;
     CURLMcode mError = CURLMcode::CURLM_OK;
     CURLcode cError = CURLcode::CURLE_OK;
+    bool canceled = false;
 };
 
 enum class HttpType
@@ -42,6 +43,7 @@ struct CurlEasyTask : public AsyncTask<CurlEasyTaskResult, CurlAsyncEngine>
     std::string outStr;
     HttpType type;
     std::string postDataStr;
+    bool canceled = false;
     
     // internal functions
     CurlEasyTask();

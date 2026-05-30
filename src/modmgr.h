@@ -3,6 +3,7 @@
 
 #include "prochelper.h"
 #include "fomod_ui.h"
+#include "curlasync.h"
 
 #include <vector>
 #include <string>
@@ -105,10 +106,8 @@ enum class ModDlState
 
 struct ModDownloadRt
 {
-    CURL* dl = nullptr;
-    std::unique_ptr<std::string> modUrlInfo;
-    FILE* modFile = nullptr;
-    curl_slist* headers = nullptr;
+    CurlTask task;
+    
     std::filesystem::path outFile;
     std::string game;
     std::string fileName;
@@ -118,6 +117,8 @@ struct ModDownloadRt
     std::string key;
     //std::string userId;
     ModDlState state = ModDlState::None;
+    
+    // imgui action cache
     bool remove = false;
     bool cancel = false;
     bool pause = false;
@@ -158,8 +159,10 @@ struct ModMgr
 
     int urlPipe = -1;
 
-    CURLM* curlMulti = nullptr;
     std::vector<ModDownloadRt> downloadSessions;
+
+    // TODO switch to weak ptr for external refs?
+    std::shared_ptr<AsyncTaskProcessor<CurlAsyncEngine>> curlEngine;
 
 };
 

@@ -56,6 +56,7 @@ target_sources(skymodlaunch
 
         src/imgui.h
         src/json.hpp
+        src/filewrapper.h
         src/main.cpp
         src/modmgr.h
         src/modmgr.cpp

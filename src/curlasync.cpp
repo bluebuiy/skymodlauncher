@@ -70,6 +70,7 @@ void CurlEasyTask::Stop(CurlAsyncEngine& env)
         {
             CURLMcode merr = curl_multi_remove_handle(env.multi, ez);
             env.curlMap.erase(it);
+            this->canceled = true;
         }
     }
 }
@@ -89,6 +90,7 @@ void CurlEasyTask::OnFinish(CurlAsyncEngine & env, CurlEasyTaskResult& result)
             env.curlMap.erase(it);
         }
     }
+    result.canceled = canceled;
     result.mError = merr;
     result.data = std::move(outStr);
     result.file = std::move(file);
@@ -104,7 +106,7 @@ void CurlEasyTask::SetUrl(char const * url)
 void CurlEasyTask::SetHeader(std::string const & name, std::string const & value)
 {
     std::string full = std::format("{}: {}", name, value);
-    curl_slist_append(headers, full.c_str());
+    headers = curl_slist_append(headers, full.c_str());
 }
 
 void CurlEasyTask::ClearHeaders()

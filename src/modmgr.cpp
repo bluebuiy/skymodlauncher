@@ -656,6 +656,139 @@ size_t curl_str_write_cb(char* data, size_t n, size_t l, void* userp)
     return n * l;
 }
 
+std::string GetDownloadUrl(std::string const & urlInfo)
+{
+    try
+    {
+        nlohmann::json j = nlohmann::json::parse(urlInfo);
+        return j[0]["URI"];
+    }
+    catch (...)
+    {
+        return {};
+    }
+}
+
+std::string GetModNameFromDownloadUrl(std::string const & url)
+{
+    std::regex r(R"(https://.*?\.com/(.*?/)?[0-9]+?/[0-9]+?/(.*?)\?.*$)");
+
+    std::smatch m;
+    if (!std::regex_search(url, m, r))
+    {
+        return {};
+    }
+
+    return m[2];
+}
+
+struct ModDownloadFinished
+{
+    ModMgr* mgr = nullptr;
+    int fileId = 0;
+    int modId = 0;
+    void operator()(CurlEasyTaskResult& result)
+    {
+        auto it = std::find_if(mgr->downloadSessions.begin(), mgr->downloadSessions.end(), [&](ModDownloadRt const & m) {
+            return m.fileId == fileId && m.modId == modId;
+        });
+        if (result.cError != CURLE_OK || result.httpCode != 200)
+        {
+            if (it != mgr->downloadSessions.end())
+            {
+                std::cout << "Error downloading mod info: " << it->fileName << std::endl;
+                it->state = ModDlState::Error;
+            }
+            std::cout << "Curl status: " << result.cError << std::endl;
+            std::cout << "Http status: " << result.httpCode << std::endl;
+            return;
+        }
+        else if (result.canceled)
+        {
+            it->state = ModDlState::Canceled;
+        }
+        else
+        {
+            it->state = ModDlState::Complete;
+        }
+    }
+};
+
+struct ModUrlFinished
+{
+    ModMgr* mgr = nullptr;
+    int fileId = 0;
+    int modId = 0;
+
+    void operator()(CurlEasyTaskResult& result)
+    {
+        auto it = std::find_if(mgr->downloadSessions.begin(), mgr->downloadSessions.end(), [&](ModDownloadRt const & m) {
+            return m.fileId == fileId && m.modId == modId;
+        });
+        if (result.cError != CURLE_OK || result.httpCode != 200)
+        {
+            if (it != mgr->downloadSessions.end())
+            {
+                std::cout << "Error downloading mod file: " << it->fileName << std::endl;
+                it->state = ModDlState::Error;
+            }
+            std::cout << "Curl status: " << result.cError << std::endl;
+            std::cout << "Http status: " << result.httpCode << std::endl;
+            return;
+        }
+
+        std::string dlUrl = GetDownloadUrl(result.data);
+        std::string modName = GetModNameFromDownloadUrl(dlUrl);
+        if (modName == "")
+        {
+            timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            modName = std::format("unknown-mod-{}-{}", ts.tv_sec, ts.tv_nsec / 100000);
+        }
+
+        auto& dlState = *it;
+        dlState.fileName = modName;
+        dlState.outFile = mgr->config.projectDir / "download" / modName;
+
+        std::filesystem::create_directories(dlState.outFile.parent_path());
+
+        FileWrapper outFile = fopen(dlState.outFile.c_str(), "wb");
+        if (!outFile)
+        {
+            dlState.state = ModDlState::Error;
+            return;
+        }
+
+        ModDownloadFinished dlFinished;
+        dlFinished.mgr = mgr;
+        dlFinished.fileId = fileId;
+        dlFinished.modId = modId;
+        auto downloadModTask = CreateTask<CurlEasyTask>(dlFinished);
+
+        CURLU* url = curl_url();
+        curl_url_set(url, CURLUPART_URL, dlUrl.c_str(), CURLU_ALLOW_SPACE | CURLU_URLENCODE);
+        char* urlEncodedUrl = nullptr;
+        curl_url_get(url, CURLUPART_URL, &urlEncodedUrl, 0);
+        std::cout << urlEncodedUrl << std::endl;
+        downloadModTask.task->SetUrl(urlEncodedUrl);
+        curl_free(urlEncodedUrl);
+        curl_url_cleanup(url);
+
+        downloadModTask.task->file = std::move(outFile);
+        downloadModTask.task->type = HttpType::Get;
+        downloadModTask.task->ClearHeaders();
+        if (mgr->verbose)
+        {
+            curl_easy_setopt(downloadModTask.task->ez, CURLOPT_VERBOSE, 1);
+        }
+
+        it->state = ModDlState::ModDownload;
+
+        it->task = downloadModTask;
+        downloadModTask.Start(mgr->curlEngine);
+    }
+};
+
 void StartNXMModDownload(ModMgr& mgr, std::string const & urlStr)
 {
     if (mgr.config.nexusApiKey.empty())
@@ -742,315 +875,63 @@ void StartNXMModDownload(ModMgr& mgr, std::string const & urlStr)
         std::cout << "Detected duplicate mod" << std::endl;
         return;
     }
+
+    // these callbacks are on the main thread, because that's where we put the processor's update.
+    ModUrlFinished taskFinished;
+    taskFinished.mgr = &mgr;
+    taskFinished.fileId = dl.fileId;
+    taskFinished.modId = dl.modId;
+    auto task = CreateTask<CurlEasyTask>(taskFinished);
+
+    std::string fullUrl = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}/download_link.json?key={}&expires={}", dl.game, dl.modId, dl.fileId, dl.key, dl.expires);
+    task.task->SetUrl(fullUrl.c_str());
+
+    task.task->SetHeader("apikey", mgr.config.nexusApiKey);
+    task.task->SetHeader("accept", "application/json");
     
     curl::curl curlSes = curl_easy_init();
 
-    auto cer = curl_easy_setopt(curlSes, CURLOPT_WRITEFUNCTION, curl_str_write_cb);
-    if (cer)
-    {
-        return;
-    }
-
-    std::unique_ptr<std::string> modInfo = std::make_unique<std::string>();
-
-    cer = curl_easy_setopt(curlSes, CURLOPT_WRITEDATA, modInfo.get());
-    if (cer)
-    {
-        return;
-    }
-
-    std::string fullUrl = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}/download_link.json?key={}&expires={}", dl.game, dl.modId, dl.fileId, dl.key, dl.expires);
-    std::cout << fullUrl << std::endl;
-    cer = curl_easy_setopt(curlSes, CURLOPT_URL, fullUrl.c_str());
-    if (cer)
-    {
-        return;
-    }
-    dl.modUrlInfo = std::move(modInfo);
-
-    std::string authHeader = std::format("apikey: {}", mgr.config.nexusApiKey);
-    curl_slist* hlist = nullptr;
-    hlist = curl_slist_append(hlist, authHeader.c_str());
-    hlist = curl_slist_append(hlist, "accept: application/json");
-
-    curl_easy_setopt(curlSes, CURLOPT_HTTPHEADER, hlist);
-    //curl_easy_setopt(curlSes, CURLOPT_FOLLOWLOCATION, 1);
-    curl_easy_setopt(curlSes, CURLOPT_HTTPGET, 1);
-
     dl.state = ModDlState::UrlQuery;
 
-    CURLMcode mer = curl_multi_add_handle(mgr.curlMulti, curlSes);
-    if (mer != CURLM_OK)
-    {
-        curl_slist_free_all(hlist);
-        return;
-    }
+    task.Start(mgr.curlEngine);
 
-    dl.headers = hlist;
-    dl.dl = curlSes.release();
     mgr.downloadSessions.emplace_back(std::move(dl));
-}
-
-std::string GetDownloadUrl(std::string const & urlInfo)
-{
-    try
-    {
-        nlohmann::json j = nlohmann::json::parse(urlInfo);
-        return j[0]["URI"];
-    }
-    catch (...)
-    {
-        return {};
-    }
-}
-
-std::string GetModNameFromDownloadUrl(std::string const & url)
-{
-    std::regex r(R"(https://.*?\.com/(.*?/)?[0-9]+?/[0-9]+?/(.*?)\?.*$)");
-
-    std::smatch m;
-    if (!std::regex_search(url, m, r))
-    {
-        return {};
-    }
-
-    return m[2];
 }
 
 
 void UpdateDownloads(ModMgr& mgr)
 {
-   
-    for (auto&& dl : mgr.downloadSessions)
+    int rm = -1;
+    for (int i = 0; i < mgr.downloadSessions.size(); ++i)
     {
-        if (dl.remove || dl.cancel)
+        auto& dl = mgr.downloadSessions[i];
+        if (dl.cancel)
         {
-            curl_multi_remove_handle(mgr.curlMulti, dl.dl);
-            curl_easy_cleanup(dl.dl);
-            dl.dl = nullptr;
-            curl_slist_free_all(dl.headers);
-            dl.headers = nullptr;
-            if (dl.modFile)
+            dl.task.Stop();
+        }
+        else if (dl.pause)
+        {
+            // not implemented yet
+        }
+        else if (dl.remove)
+        {
+            if (rm == -1)
             {
-                fclose(dl.modFile);
-            }
-            dl.modFile = nullptr;
-        }
-        else if (dl.pause && dl.state == ModDlState::ModDownload)
-        {
-            curl_easy_pause(dl.dl, CURLPAUSE_RECV);
-            dl.state = ModDlState::ModPaused;
-        }
-        else if (dl.unpause && dl.state == ModDlState::ModPaused)
-        {
-            curl_easy_pause(dl.dl, CURLPAUSE_CONT);
-            dl.state = ModDlState::ModDownload;
-        }
-
-        if (dl.remove)
-        {
-            std::string path = std::format("{}/download/{}", *WordExpand(mgr.config.projectDir), dl.fileName);
-            std::cout << "Unlink: " << path << std::endl;
-            if (unlink(path.c_str()))
-            {
-                std::cout << errno << std::endl;
-            }
-        }
-
-        dl.remove = false;
-        dl.cancel = false;
-        dl.pause = false;
-        dl.unpause = false;
-    }
-
-    auto remStart = std::remove_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [](ModDownloadRt const & dl)
-    {
-        return dl.remove == true;
-    });
-    mgr.downloadSessions.erase(remStart, mgr.downloadSessions.end());
-
-    int h = 0;
-    auto c = curl_multi_perform(mgr.curlMulti, &h);
-    if (c != CURLM_OK)
-    {
-        // clear all
-        std::cout << "Error" << std::endl;
-    }
-
-    struct CurlRes
-    {
-        CURL* curl;
-        CURLcode result;
-    };
-
-    std::vector<CurlRes> done;
-
-    int msgRem = 0;
-    while (CURLMsg* msg = curl_multi_info_read(mgr.curlMulti, &msgRem))
-    {
-        if (msg->msg == CURLMSG_DONE)
-        {
-            done.push_back(CurlRes{msg->easy_handle, msg->data.result});
-            auto cme = curl_multi_remove_handle(mgr.curlMulti, msg->easy_handle);
-            if (cme != CURLM_OK)
-            {
-                std::cout << "Failed to remove" << std::endl;
+                dl.task.Stop();
+                rm = i;
             }
         }
     }
 
-    
-    // now update the download stages
-
-    for (auto&& cs : done)
+    if (rm != -1)
     {
-        bool cleanup = false;
-        auto it = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & a){return a.dl == cs.curl;});
-        if (it == mgr.downloadSessions.end())
-        {
-            // shouldn't happen
-            std::cout << "Corrupted download sessions!" << std::endl;
-        }
-        else
-        {
-            auto& dlState = *it;
-            if (cs.result != CURLE_OK)
-            {
-                dlState.state = ModDlState::Error;
-                cleanup = true;
-            }
-            else if (dlState.state == ModDlState::UrlQuery)
-            {
-                int code = 0;
-                curl_easy_getinfo(dlState.dl, CURLINFO_RESPONSE_CODE, &code);
-                std::cout << code << std::endl;
-                if (code != 200)
-                {
-                    it->state = ModDlState::Error;
-                    cleanup = true;
-                }
-                else
-                {
-                    // TODO setup mod download
-                    std::string dlUrl = GetDownloadUrl(*(it->modUrlInfo));
-                    std::string modName = GetModNameFromDownloadUrl(dlUrl);
-                    bool duplicate = false;
-                    if (modName == "")
-                    {
-                        timespec ts;
-                        clock_gettime(CLOCK_MONOTONIC, &ts);
-                        modName = std::format("unknonw-mod-{}-{}", ts.tv_sec, ts.tv_nsec / 100000);
-                    }
-                    dlState.fileName = modName;
-                    dlState.outFile = std::format("{}/download/{}", *WordExpand(mgr.config.projectDir), modName);
-                    std::filesystem::create_directories(dlState.outFile.parent_path());
-                    FILE* outFile = fopen(dlState.outFile.c_str(), "wb");
-                    if (!outFile)
-                    {
-                        cleanup = true;
-                        it->state = ModDlState::Error;
-                    }
-                    else
-                    {
-                        dlState.modFile = outFile;
-
-                        CURLU* url = curl_url();
-                        curl_url_set(url, CURLUPART_URL, dlUrl.c_str(), CURLU_ALLOW_SPACE | CURLU_URLENCODE);
-                        char* urlEncodedUrl = nullptr;
-                        curl_url_get(url, CURLUPART_URL, &urlEncodedUrl, 0);
-                        std::cout << urlEncodedUrl << std::endl;
-                        auto ce = curl_easy_setopt(dlState.dl, CURLOPT_URL, urlEncodedUrl);
-                        curl_free(urlEncodedUrl);
-                        if (ce != CURLE_OK)
-                        {
-                            cleanup = true;
-                            std::cout << "Bad url: " << dlUrl << std::endl;
-                        }
-                        else
-                        {
-                            curl_easy_setopt(dlState.dl, CURLOPT_WRITEDATA, dlState.modFile);
-                            curl_easy_setopt(dlState.dl, CURLOPT_WRITEFUNCTION, fwrite);
-                            curl_easy_setopt(dlState.dl, CURLOPT_HTTPGET, 1);
-                            curl_easy_setopt(dlState.dl, CURLOPT_HTTPHEADER, nullptr);
-                            curl_easy_setopt(dlState.dl, CURLOPT_VERBOSE, 1);
-                            if (curl_multi_add_handle(mgr.curlMulti, dlState.dl) != CURLM_OK)
-                            {
-                                cleanup = true;
-                                it->state = ModDlState::Error;
-                            }
-                            else
-                            {
-                                it->state = ModDlState::ModDownload;
-                            }
-                        }
-                    }
-                }
-            }
-            else if (dlState.state == ModDlState::ModDownload)
-            {
-                int code = 0;
-                auto ce = curl_easy_getinfo(it->dl, CURLINFO_RESPONSE_CODE, &code);
-                if (ce != CURLE_OK)
-                {
-                    std::cout << "Error?"<< std::endl;
-                }
-                if (code != 200)
-                {
-                    it->state = ModDlState::Error;
-                }
-                else
-                {
-                    it->state = ModDlState::Complete;
-                }
-                cleanup = true;
-            }
-            else if (dlState.state == ModDlState::ModPaused)
-            {
-                int code = 0;
-                auto ce = curl_easy_getinfo(it->dl, CURLINFO_RESPONSE_CODE, &code);
-                if (code != 200)
-                {
-                    it->state = ModDlState::Error;
-                    cleanup = true;
-                }
-                else
-                {
-                    // tried to pause, but it completed between then and now.
-                    it->state = ModDlState::Complete;
-                }
-                
-            }
-            #if 0
-            else if (dlState.state == ModDlState::Canceled)
-            {
-                int code = 0;
-                auto ce = curl_easy_getinfo(it->dl, CURLINFO_RESPONSE_CODE, &code);
-                if (code != 200)
-                {
-                    it->state = ModDlState::Error;
-                }
-                else
-                {
-                    // tried to cancel, but it completed between then and now.
-                    it->state = ModDlState::Complete;
-                }
-                cleanup = true;
-            }
-            #endif
-        }
-        if (cleanup)
-        {
-            curl_easy_cleanup(it->dl);
-            it->dl = nullptr;
-            if (it->modFile)
-            {
-                fclose(it->modFile);
-            }
-            it->modFile = nullptr;
-            curl_slist_free_all(it->headers);
-            it->headers = nullptr;
-        }
+        auto& dl = mgr.downloadSessions[rm];
+        std::filesystem::path f = mgr.config.projectDir / "download" / dl.fileName;
+        std::filesystem::remove(f);
+        mgr.downloadSessions.erase(mgr.downloadSessions.begin() + rm);
     }
+
+    mgr.curlEngine->Update();
 
 }
 
@@ -1187,23 +1068,19 @@ void InitMgr(ModMgr& mgr)
 {
     curl_global_init(CURL_GLOBAL_ALL);
 
-    mgr.curlMulti = curl_multi_init();
-    curl_multi_setopt(mgr.curlMulti, CURLMOPT_MAXCONNECTS, 8);
+    mgr.curlEngine = std::make_shared<AsyncTaskProcessor<CurlAsyncEngine>>();
 }
 
 void CleanupMgr(ModMgr& mgr)
 {
-
-    for (auto&& dlSession : mgr.downloadSessions)
+    for (auto&& task : mgr.downloadSessions)
     {
-        curl_easy_pause(dlSession.dl, CURLPAUSE_RECV);
-        curl_easy_cleanup(dlSession.dl);
+        task.task.Stop();
     }
 
     mgr.downloadSessions.clear();
 
-    curl_multi_cleanup(mgr.curlMulti);
-    mgr.curlMulti = nullptr;
+    mgr.curlEngine.reset();
 
     curl_global_cleanup();
 }
