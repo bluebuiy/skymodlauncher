@@ -3,6 +3,7 @@
 
 #include "imgui.h"
 #include "prochelper.h"
+#include "modmgr_collection_ui.h"
 
 #include <fstream>
 #include <iostream>
@@ -607,6 +608,7 @@ void RenderModMgr(ModMgr& mgr)
     RenderPluginsList(mgr);
     RenderModDownloads(mgr);
     RenderFomod(mgr);
+    RenderCollectionWindow(mgr);
 
     if (mgr.makingNewMod)
     {

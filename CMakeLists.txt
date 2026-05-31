@@ -63,6 +63,10 @@ target_sources(skymodlaunch
         src/modmgr_ui.cpp
         src/modmgr_json.cpp
         src/modmgr_json.h
+        src/modmgr_collection.h
+        src/modmgr_collection.cpp
+        src/modmgr_collection_ui.h
+        src/modmgr_collection_ui.cpp
         src/prochelper.cpp
         src/prochelper.h
         src/procex.cpp

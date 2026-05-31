@@ -4,6 +4,8 @@
 #include "prochelper.h"
 #include "fomod_ui.h"
 #include "curlasync.h"
+#include "nxmurl.h"
+#include "modmgr_collection.h"
 
 #include <vector>
 #include <string>
@@ -117,7 +119,7 @@ struct ModDownloadRt
     std::string key;
     //std::string userId;
     ModDlState state = ModDlState::None;
-    
+
     // imgui action cache
     bool remove = false;
     bool cancel = false;
@@ -138,6 +140,8 @@ struct ModMgr
     ModInfo newMod;
     CustomVariable newVariable;
     ModExec newExec;
+
+    NxmCollection collection;
 
     //////// ImGui state cache ////////
 
@@ -197,7 +201,9 @@ std::optional<std::string> DetectAppDataLocal(ModMgr& mgr);
 void CheckNXMAction(ModMgr& mgr);
 void SetupNXMActionPipe(ModMgr& mgr);
 void CleanupNXMAction(ModMgr& mgr);
-void StartNXMModDownload(ModMgr& mgr, std::string const & url);
+void HandleNXMUrl(ModMgr& mgr, std::string const & urlStr);
+void StartNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url);
+void StartNXMCollectionInstall(ModMgr& mgr, NxmCollectionUrl const & url);
 
 void UpdateDownloads(ModMgr& mgr);
 

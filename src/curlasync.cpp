@@ -34,6 +34,11 @@ void CurlEasyTask::Start(CurlAsyncEngine& env)
         curl_easy_setopt(ez, CURLOPT_WRITEFUNCTION, CurlEasyTask_write_cb);
         curl_easy_setopt(ez, CURLOPT_WRITEDATA, this);
     }
+    if (type == HttpType::Post && !contentType.empty())
+    {
+        std::string ctHeader = std::format("Content-Type: {}", contentType);
+        headers = curl_slist_append(headers, ctHeader.c_str());
+    }
     curl_easy_setopt(ez, CURLOPT_HTTPHEADER, headers);
     if (type == HttpType::Get)
     {
@@ -41,10 +46,15 @@ void CurlEasyTask::Start(CurlAsyncEngine& env)
     }
     else if (type == HttpType::Post)
     {
-        postData = curl_mime_init(ez);
-        part = curl_mime_addpart(postData);
-        curl_mime_data(part, postDataStr.data(), postDataStr.size());
-        curl_easy_setopt(ez, CURLOPT_MIMEPOST, postData);
+        //postData = curl_mime_init(ez);
+        //part = curl_mime_addpart(postData);
+        //curl_mime_data(part, postDataStr.data(), postDataStr.size());
+        //curl_easy_setopt(ez, CURLOPT_MIMEPOST, postData);
+        if (postDataStr.size() < std::numeric_limits<int32_t>::max())
+        {
+            curl_easy_setopt(ez, CURLOPT_POSTFIELDSIZE, postDataStr.size());
+            curl_easy_setopt(ez, CURLOPT_POSTFIELDS, postDataStr.data());
+        }
     }
     env.mt.lock();
     if (env.curlMap.find(ez) == env.curlMap.end())

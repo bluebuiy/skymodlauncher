@@ -1,6 +1,7 @@
 
 #include "modmgr.h"
 #include "fomod_ui.h"
+#include "nxmurl.h"
 
 #include <fstream>
 #include <iostream>
@@ -604,7 +605,7 @@ void CheckNXMAction(ModMgr& mgr)
     else if (rdAmt > 0)
     {
         std::cout << "Received NXM url: " << buff << std::endl;
-        StartNXMModDownload(mgr, buff);
+        HandleNXMUrl(mgr, buff);
     }
 }
 
@@ -620,14 +621,22 @@ void CleanupNXMAction(ModMgr& mgr)
 
 bool str_to_int(std::string const & str, int& out)
 {
-    size_t end = 0;
-    int i = std::stoi(str, &end, 10);
-    if (end != str.size())
+    // WHY IS IT THROWING WTF IS end FOR THEN
+    try
+    {
+        size_t end = 0;
+        int i = std::stoi(str, &end, 10);
+        if (end != str.size())
+        {
+            return false;
+        }
+        out = i;
+        return true;
+    }
+    catch (...)
     {
         return false;
     }
-    out = i;
-    return true;
 }
 
 // prefix = "key=" 
@@ -789,15 +798,11 @@ struct ModUrlFinished
     }
 };
 
-void StartNXMModDownload(ModMgr& mgr, std::string const & urlStr)
-{
-    if (mgr.config.nexusApiKey.empty())
-    {
-        std::cout << "Nexus api key missing" << std::endl;
-        return;
-    }
+// nxm://skyrimspecialedition/collections/vietdt/revisions/14
+// nxm://skyrimspecialedition/mods/181164/files/757381?key=fgpPrnBzmIJVAjta6KHCEQ&expires=1780339902&user_id=28860775
 
-    ModDownloadRt dl;
+void HandleNXMUrl(ModMgr& mgr, std::string const & urlStr)
+{
     curl::url url(curl_url());
     CURLUcode rc = curl_url_set(url, CURLUPART_URL, urlStr.c_str(), CURLU_NON_SUPPORT_SCHEME);
     if (rc != CURLUE_OK)
@@ -815,55 +820,81 @@ void StartNXMModDownload(ModMgr& mgr, std::string const & urlStr)
     std::filesystem::path pp(pathPart);
     curl_free(pathPart);
 
+    char* hostPart = nullptr;
+    rc = curl_url_get(url, CURLUPART_HOST, &hostPart, 0);
+    if (rc != CURLUE_OK)
+    {
+        return;
+    }
+    std::string hostStr = hostPart;
+    curl_free(hostPart);
+
     std::vector<std::string> parts;
     for (auto&& part : pp)
     {
         parts.push_back(part);
     }
 
+    // both mod and collection url have 5 path parts
     if (parts.size() != 5)
     {
         return;
     }
 
-    // extract key
-
-    char* queryPart = nullptr;
-    rc = curl_url_get(url, CURLUPART_QUERY, &queryPart, 0);
-    if (rc != CURLUE_OK)
+    if (parts[1] == "collections")
     {
+        NxmCollectionUrl colUrl;
+        colUrl.game = hostStr;
+        colUrl.slug = parts[2];
+        if (!str_to_int(parts[4], colUrl.rev))
+        {
+            return;
+        }
+        StartNXMCollectionInstall(mgr, colUrl);
+    }
+    else if (parts[1] == "mods")
+    {
+        NxmModFileUrl fileUrl;
+        fileUrl.game = hostStr;
+        if (!str_to_int(parts[2], fileUrl.modId))
+        {
+            return;
+        }
+        if (!str_to_int(parts[4], fileUrl.fileId))
+        {
+            return;
+        }
+
+        char* queryPart = nullptr;
+        rc = curl_url_get(url, CURLUPART_QUERY, &queryPart, 0);
+        if (rc != CURLUE_OK)
+        {
+            curl_free(queryPart);
+            return;
+        }
+        std::string query(queryPart);
         curl_free(queryPart);
-        return;
+        fileUrl.key = extractQueryValue(query, "key=");
+        fileUrl.expires = extractQueryValue(query, "expires=");
+        StartNXMModDownload(mgr, fileUrl);
     }
+}
 
-    std::string query(queryPart);
-    curl_free(queryPart);
-
-    // game
-
-    char* gamePart = nullptr;
-    rc = curl_url_get(url, CURLUPART_HOST, &gamePart, 0);
-    if (rc != CURLUE_OK)
+void StartNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url)
+{
+    if (mgr.config.nexusApiKey.empty())
     {
-        curl_free(gamePart);
+        std::cout << "Nexus api key missing" << std::endl;
         return;
     }
 
-    std::string game(gamePart);
-    curl_free(gamePart);
+    ModDownloadRt dl;
 
-    dl.key = extractQueryValue(query, "key=");
-    dl.expires = extractQueryValue(query, "expires=");
-
-    if (!str_to_int(parts[2], dl.modId))
-    {
-        return;
-    }
-    if (!str_to_int(parts[4], dl.fileId))
-    {
-        return;
-    }
-    dl.game = game;
+    dl.key = url.key;
+    dl.expires = url.expires;
+    dl.modId = url.modId;
+    dl.fileId = url.fileId;
+    dl.game = url.game;
 
     // check if the file is already in the download list
     auto dupIt = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & dlr)
@@ -883,13 +914,11 @@ void StartNXMModDownload(ModMgr& mgr, std::string const & urlStr)
     taskFinished.modId = dl.modId;
     auto task = CreateTask<CurlEasyTask>(taskFinished);
 
-    std::string fullUrl = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}/download_link.json?key={}&expires={}", dl.game, dl.modId, dl.fileId, dl.key, dl.expires);
-    task.task->SetUrl(fullUrl.c_str());
+    std::string dlInfoUrl = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}/download_link.json?key={}&expires={}", dl.game, dl.modId, dl.fileId, dl.key, dl.expires);
+    task.task->SetUrl(dlInfoUrl.c_str());
 
     task.task->SetHeader("apikey", mgr.config.nexusApiKey);
     task.task->SetHeader("accept", "application/json");
-    
-    curl::curl curlSes = curl_easy_init();
 
     dl.state = ModDlState::UrlQuery;
 
@@ -927,7 +956,8 @@ void UpdateDownloads(ModMgr& mgr)
     {
         auto& dl = mgr.downloadSessions[rm];
         std::filesystem::path f = mgr.config.projectDir / "download" / dl.fileName;
-        std::filesystem::remove(f);
+        std::error_code rmErr;
+        std::filesystem::remove(f, rmErr);
         mgr.downloadSessions.erase(mgr.downloadSessions.begin() + rm);
     }
 

@@ -37,12 +37,13 @@ struct CurlEasyTask : public AsyncTask<CurlEasyTaskResult, CurlAsyncEngine>
 {
     CURL* ez = nullptr;
     curl_slist* headers = nullptr;
-    curl_mime* postData = nullptr;
-    curl_mimepart* part = nullptr;
+    //curl_mime* postData = nullptr;
+    //curl_mimepart* part = nullptr;
     FileWrapper file;
     std::string outStr;
     HttpType type;
     std::string postDataStr;
+    std::string contentType;
     bool canceled = false;
     
     // internal functions
