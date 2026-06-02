@@ -2,6 +2,7 @@
 #pragma once
 
 #include "nxmurl.h"
+#include "nlohmann/json.hpp"
 
 #include <string>
 #include <stdint.h>
@@ -13,7 +14,8 @@ enum class CollectionStatus
     None,
     FetchingInfo,
     WaitingForInstallButton,
-    DisplayInfo,
+    FetchingBundleLink,
+    DownloadingBundle,
     DownloadingMods,
     InstallingMods,
     ConfigureLoadOrder,
@@ -24,6 +26,9 @@ struct CollectionInfo
 {
     int64_t totalSize = 0;
     int modCount = 0;
+    // link to get the link for the download (api.nxm.com/v2/...)
+    std::string downloadLinkLink;
+    // link to download collection bundle from cdn
     std::string downloadLink;
     std::string description;
     std::string name;
@@ -43,12 +48,19 @@ struct NxmCollection
     CollectionInfo info;
 
     CollectionStatus status = CollectionStatus::None;
+    nlohmann::json bundleDefinition;
+
+    int installIndex = -1;
+    
 
 };
 
 
 void StartNXMCollectionInstall(ModMgr& mgr, NxmCollectionUrl const & url);
-
+void GetCollectionBundleLink(ModMgr& mgr);
+void DownloadCollectionBundle(ModMgr& mgr);
+void DownloadCollectionMods(ModMgr& mgr);
+void InstallCollectionMods(ModMgr& mgr);
 
 
 

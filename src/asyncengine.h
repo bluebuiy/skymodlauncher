@@ -24,6 +24,8 @@ class AsyncTaskBase : public std::enable_shared_from_this<AsyncTaskBase<TE>>
 public:
     std::shared_ptr<AsyncTaskProcessor<TE>> env;
     std::atomic<bool> started = false;
+    // completion does not contribute to synchronization.
+    bool completed = false;
 
     virtual ~AsyncTaskBase() = default;
 
@@ -53,6 +55,7 @@ public:
         bool owned = false;
         P result;
         OnFinish(this->env->env, result);
+        this->completed = true;
         if (finishedCb)
         {
             finishedCb(result);
@@ -71,6 +74,7 @@ public:
     {
         if (task)
         {
+            task->completed = false;
             task->env = env;
             env->BeginTask(task);
         }
@@ -81,6 +85,15 @@ public:
         {
             task->env->CancelTask(task);
         }
+    }
+
+    bool Completed()
+    {
+        if (task)
+        {
+            return task->completed;
+        }
+        return false;
     }
 
 };

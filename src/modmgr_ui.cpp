@@ -436,7 +436,14 @@ void RenderModDownloads(ModMgr& mgr)
                 }
             }
             ImGui::SameLine();
-            ImGui::Text("%-64s", mgr.downloadSessions[i].fileName.c_str());
+            if (mgr.downloadSessions[i].fileName.empty())
+            {
+                ImGui::Text("%-64s", mgr.downloadSessions[i].hName.c_str());
+            }
+            else
+            {
+                ImGui::Text("%-64s", mgr.downloadSessions[i].fileName.c_str());
+            }
             ImGui::SameLine();
             ImGui::Text(" ? ");
             if (ImGui::BeginItemTooltip())

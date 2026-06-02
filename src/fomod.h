@@ -304,6 +304,7 @@ namespace fomod
         SelectionType optionType;
         std::vector<Option> options;
         std::string name;
+        std::string stepName;
     };
 
     struct FileInstallAction

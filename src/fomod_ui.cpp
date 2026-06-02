@@ -8,7 +8,7 @@
 #include <iostream>
 #include <format>
 
-bool InitFomod(ModMgr & mgr, std::filesystem::path const & tmpDir, std::string const & mod)
+bool InitFomod(ModMgr & mgr, std::filesystem::path const & tmpDir, std::filesystem::path const & realRoot, std::filesystem::path const & fomodConf, std::filesystem::path const & installDst, std::string const & modName)
 {
     if (mgr.fomodState.has_value())
     {
@@ -16,7 +16,7 @@ bool InitFomod(ModMgr & mgr, std::filesystem::path const & tmpDir, std::string c
         return false;
     }
 
-    std::filesystem::path fomdPath = mgr.config.projectDir / tmpDir / "FOMod" / "ModuleConfig.xml";
+    std::filesystem::path fomdPath = fomodConf;
 
     auto ld = fomod::Load(fomdPath);
 
@@ -30,11 +30,12 @@ bool InitFomod(ModMgr & mgr, std::filesystem::path const & tmpDir, std::string c
     mgr.fomodState->fomod = std::move(*ld);
     mgr.fomodState->stage = FomodStage::Initial;
 
-    mgr.fomodState->modName = mod;
+    mgr.fomodState->installPrefix = installDst;
+    mgr.fomodState->realRoot = realRoot;
     mgr.fomodState->tmpDir = tmpDir;
 
     // TODO load the info file
-    mgr.fomodState->name = mod;
+    mgr.fomodState->name = modName;
     mgr.fomodState->openPopup = true;
 
     return true;
@@ -243,74 +244,16 @@ void RenderFomod(ModMgr& mgr)
     }
     else if (doInstall)
     {
-        std::filesystem::path prefix = *WordExpand(mgr.config.modFolder);
-        prefix /= fomod.modName;
-        prefix /= "Data";
-        std::filesystem::create_directories(prefix);
-        // were gonna use -n, no clobber, so we can do the moves high to low and remove unecessary copies.
-        std::reverse(fomod.fileActions.actions.begin(), fomod.fileActions.actions.end());
-        std::filesystem::path wd = mgr.config.projectDir / fomod.tmpDir;
-        for (auto&& action : fomod.fileActions.actions)
-        {
-            if (action.action == fomod::FileAction::FileToFile)
-            {
-                std::vector<std::string> mvCmd = {
-                    "/usr/bin/mv",
-                    "-n",
-                    //"-v",
-                    mgr.config.projectDir / fomod.tmpDir / action.from,
-                    prefix / action.to
-                };
-                if (!LaunchProc(mvCmd, "/"))
-                {
-                    std::cout << "!!!!!!! Failed to move a file: " << action.from << std::endl;
-                }
-            }
-            else if (action.action == fomod::FileAction::DirToDir)
-            {
-                std::vector<std::string> findCmd = {
-                    "/usr/bin/find",
-                    mgr.config.projectDir / fomod.tmpDir / action.from,
-                    "-maxdepth",
-                    "1",
-                    "-mindepth",
-                    "1",
-                    "-print0"
-                };
-                // if find is given an absolute path, it outputs absolute paths
-                // otherwise it outputs paths relative to the working directory
-                auto findRes = LaunchProcParsePrint0(findCmd, "/");
-                if (!findRes)
-                {
-                    std::cout << "!!!!!!!!!!! Failed to find files in " << mgr.config.projectDir / fomod.tmpDir / action.from << std::endl;
-                }
-                else
-                {
-                    for (auto&& p : *findRes)
-                    {
-                        std::vector<std::string> cp = {
-                            "/usr/bin/cp",
-                            "-rl",
-                            "--update=none",
-                            p,
-                            "-t",
-                            prefix / action.to
-                        };
-                        if (!LaunchProc(cp, "/"))
-                        {
-                            std::cout << "Failed to move a dir: " << action.from << std::endl;
-                        }
-                        // dont need to delete here, because the tmp folder is deleted later.
-                    }
-                }
-            }
-        }
+        ApplyFomodFileActions(mgr, fomod.fileActions, mgr.config.projectDir / fomod.realRoot, fomod.installPrefix);
+
+        DiscoverPlugins(mgr);
+
 
         // create mod entry
         auto& mod = mgr.inst.mods.emplace_back();
         mod.enabled = true;
         mod.loadIndex = mgr.inst.mods.size() - 1;
-        mod.modFile = fomod.modName;
+        mod.modFile = fomod.name;
 
         // remove staging
         std::vector<std::string> rmCmd = {
@@ -323,16 +266,160 @@ void RenderFomod(ModMgr& mgr)
             std::cout << "Failed to delete fomod tmp dir: " << mgr.config.projectDir / fomod.tmpDir << std::endl;
         }
 
-        DiscoverPlugins(mgr);
-
         mgr.fomodState.reset();
         ImGui::CloseCurrentPopup();
+
     }
-
-
 
     ImGui::EndPopup();
 
 }
 
+std::string NormalizePath(std::string const & str)
+{
+    std::string f(str);
+    for (char& c : f)
+    {
+        if (isalpha(c))
+        {
+            c = tolower(c);
+        }
+    }
+    return f;
+}
+
+std::filesystem::path NormPath(std::filesystem::path const & p)
+{
+    auto parent = p.parent_path();
+    std::string f = p.filename();
+    for (char& c : f)
+    {
+        if (isalpha(c))
+        {
+            c = tolower(c);
+        }
+    }
+    return parent / f;
+}
+
+struct DirNormListing
+{
+    std::filesystem::path dirPath;
+    std::filesystem::path dstPath;
+    std::vector<std::filesystem::path> children;
+    int index = 0;
+};
+
+// moves the contents of src to inside the destination target directory dst
+// if a file already exists, skips it.
+bool MoveDirNormalizePaths(std::filesystem::path const & src, std::filesystem::path const & dst)
+{
+    try
+    {
+        std::vector<DirNormListing> stack;
+        {
+            auto& next = stack.emplace_back();
+            for (auto dit = std::filesystem::directory_iterator(src); dit != std::filesystem::directory_iterator(); ++dit)
+            {
+                next.children.emplace_back(dit->path());
+            }
+            next.dstPath = dst;
+        }
+
+        while (stack.size() > 0)
+        {
+            if (stack.back().index < stack.back().children.size())
+            {
+                std::filesystem::path currentPath = stack.back().children[stack.back().index];
+                std::filesystem::path curDstPath = stack.back().dstPath;
+                ++stack.back().index;
+                if (std::filesystem::is_directory(currentPath))
+                {
+                    auto& next = stack.emplace_back();
+                    next.dirPath = currentPath;
+                    std::string np = NormalizePath(currentPath.filename());
+                    if (np == "data" && stack.size() == 2)
+                    {
+                        // hopefully nobody put a data directory in the root of a data mod 
+                        if (np != currentPath.filename())
+                        {
+                            std::cout << "Detected incorrectly capitalized Data root path: " << currentPath << std::endl;
+                        }
+                        np = "Data";
+                    }
+                    next.dstPath = curDstPath / np;
+                    for (auto dit = std::filesystem::directory_iterator(currentPath); dit != std::filesystem::directory_iterator(); ++dit)
+                    {
+                        next.children.emplace_back(dit->path());
+                    }
+                    std::filesystem::create_directories(next.dstPath);
+                }
+                else
+                {
+                    auto norm = curDstPath / NormalizePath(currentPath.filename());
+                    if (!std::filesystem::exists(norm))
+                    {
+                        std::filesystem::create_hard_link(currentPath, norm);
+                    }
+                }
+            }
+            else
+            {
+                stack.pop_back();
+            }
+        }
+    }
+    catch (std::filesystem::filesystem_error const & err)
+    {
+        std::cout << "Failed to move & normalize files: " << err.what() << std::endl;
+        std::cout << "Path 1: " << err.path1() << std::endl;
+        std::cout << "Path 2: " << err.path2() << std::endl;
+        return false;
+    }
+    return true;
+}
+
+bool ApplyFomodFileActions(ModMgr & mgr, fomod::InstallActions & fileActions, std::filesystem::path const & staging, std::filesystem::path const & prefix)
+{
+    bool success = true;
+
+    std::filesystem::create_directories(prefix);
+    // were gonna use -n, no clobber, so we can do the moves high to low and remove unecessary copies.
+    std::reverse(fileActions.actions.begin(), fileActions.actions.end());
+    std::filesystem::path wd = staging;
+    for (auto&& action : fileActions.actions)
+    {
+        if (action.action == fomod::FileAction::FileToFile)
+        {
+            try
+            {
+                std::filesystem::path dstPath = prefix / NormalizePath(action.to);
+                if (!std::filesystem::exists(dstPath))
+                {
+                    std::filesystem::create_directories(dstPath);
+                    std::filesystem::create_hard_link(staging, prefix / NormalizePath(action.to));
+                }
+            }
+            catch (std::filesystem::filesystem_error const & err)
+            {
+                success = false;
+                std::cout << "Failed to normailze file: " << err.what() << std::endl;
+                std::cout << "Path 1: " << err.path1() << std::endl;
+                std::cout << "Path 2: " << err.path2() << std::endl;
+                std::cout << "!!!!!!!!!!!! Failed to install correctly!" << std::endl;
+            }
+        }
+        else if (action.action == fomod::FileAction::DirToDir)
+        {
+            std::string normTo = NormalizePath(action.to);
+            std::filesystem::create_directories(prefix / normTo);
+            if (!MoveDirNormalizePaths(staging / action.from, prefix / normTo))
+            {
+                success = false;
+                std::cout << "!!!!!!!!!!!! Failed to install correctly!" << std::endl;
+            }
+        }
+    }
+    return success;
+}
 

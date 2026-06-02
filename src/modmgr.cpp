@@ -2,6 +2,7 @@
 #include "modmgr.h"
 #include "fomod_ui.h"
 #include "nxmurl.h"
+#include "asyncproc.h"
 
 #include <fstream>
 #include <iostream>
@@ -60,6 +61,7 @@ void LaunchExec(ModMgr& mgr, std::string const & execName)
     ForkInvoke(&ex);
 }
 
+// TODO search overwrite too
 void DiscoverPlugins(ModMgr& mgr)
 {
     // plugins are always in ./Data/
@@ -118,10 +120,11 @@ ModDownload MdFromRt(ModDownloadRt const & mdrt)
     ret.fileId = mdrt.fileId;
     ret.modId = mdrt.modId;
     ret.game = mdrt.game;
+    ret.installType = (mdrt.installType == ModInstallType::Data ? "data" : "root");
     return ret;
 }
 
-ModDownloadRt MdrtFromMd(ModDownload& md)
+ModDownloadRt MdrtFromMd(ModDownload const & md)
 {
     ModDownloadRt ret;
     ret.fileName = std::move(md.fileName);
@@ -129,6 +132,7 @@ ModDownloadRt MdrtFromMd(ModDownload& md)
     ret.modId = md.modId;
     ret.game = std::move(md.game);
     ret.state = ModDlState::Complete;
+    ret.installType = (md.installType == "root" ? ModInstallType::Root : ModInstallType::Data);
     return ret;
 }
 
@@ -613,8 +617,6 @@ void CleanupNXMAction(ModMgr& mgr)
 {
     close(mgr.urlPipe);
     unlink("/tmp/skymodurl");
-
-    
 }
 
 // nxm://skyrimspecialedition/mods/17372/files/268342?key=h2-W-GZbvPARUeEb7ZSqIw&expires=1779849752&user_id=28860775
@@ -654,15 +656,6 @@ std::string extractQueryValue(std::string const & query, std::string const & pre
 
     std::string ret = query.substr(keyIndexStart, keyIndexEnd == std::string::npos ? keyIndexEnd : keyIndexEnd - keyIndexStart);
     return ret;
-}
-
-// ill clean this up & make it reusable later
-
-size_t curl_str_write_cb(char* data, size_t n, size_t l, void* userp)
-{
-    std::string* str = static_cast<std::string*>(userp);
-    str->insert(str->end(), data, data + n * l);
-    return n * l;
 }
 
 std::string GetDownloadUrl(std::string const & urlInfo)
@@ -738,7 +731,7 @@ struct ModUrlFinished
         {
             if (it != mgr->downloadSessions.end())
             {
-                std::cout << "Error downloading mod file: " << it->fileName << std::endl;
+                std::cout << "Error downloading mod file info: " << " " << fileId << " " << modId << std::endl;
                 it->state = ModDlState::Error;
             }
             std::cout << "Curl status: " << result.cError << std::endl;
@@ -880,7 +873,7 @@ void HandleNXMUrl(ModMgr& mgr, std::string const & urlStr)
     }
 }
 
-void StartNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url)
+void StartNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url, std::string const & name, ModInstallType type)
 {
     if (mgr.config.nexusApiKey.empty())
     {
@@ -895,6 +888,8 @@ void StartNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url)
     dl.modId = url.modId;
     dl.fileId = url.fileId;
     dl.game = url.game;
+    dl.hName = name;
+    dl.installType = type;
 
     // check if the file is already in the download list
     auto dupIt = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & dlr)
@@ -914,7 +909,15 @@ void StartNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url)
     taskFinished.modId = dl.modId;
     auto task = CreateTask<CurlEasyTask>(taskFinished);
 
-    std::string dlInfoUrl = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}/download_link.json?key={}&expires={}", dl.game, dl.modId, dl.fileId, dl.key, dl.expires);
+    std::string dlInfoUrl;
+    if (dl.expires.empty() || dl.key.empty())
+    {
+        dlInfoUrl = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}/download_link.json", dl.game, dl.modId, dl.fileId);
+    }
+    else
+    {
+        dlInfoUrl = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}/download_link.json?key={}&expires={}", dl.game, dl.modId, dl.fileId, dl.key, dl.expires);
+    }
     task.task->SetUrl(dlInfoUrl.c_str());
 
     task.task->SetHeader("apikey", mgr.config.nexusApiKey);
@@ -965,10 +968,297 @@ void UpdateDownloads(ModMgr& mgr)
 
 }
 
+struct DecompressFileResult
+{
+    std::function<void(bool)> next;
+    void operator()(AsyncProcessResult& result)
+    {
+        if (result.exitCode == 0)
+        {
+            if (next)
+            {
+                next(true);
+            }
+        }
+        else
+        {
+            if (!next)
+            {
+                next(false);
+            }
+        }
+    }
+};
+
+ProcessTask UnzipFile(std::filesystem::path const & file, std::filesystem::path const & dest, std::function<void(bool)> next)
+{
+    // check filetype
+
+    // --print0 is not working
+    std::vector<std::string> args = {
+        "/usr/bin/file",
+        // "-0",
+        "-b",
+        "--mime-type",
+        std::string(file)
+    };
+
+    auto out = LaunchProcForOutput(args, "/");
+    if (!out)
+    {
+        std::cout << "Failed to determine file type" << std::endl;
+        return {};
+    }
+
+    std::vector<std::string> extractCmd;
+    std::string type = *out;
+
+    if (type == "application/x-7z-compressed\n")
+    {
+        // 7z creates missing directories
+        extractCmd = {
+            "/usr/bin/7z",
+            "x",
+            std::format("-o{}", std::string(dest)),
+            std::string(file)
+        };
+    }
+    else if (type == "application/zip\n")
+    {
+        // unzip creates missing directories
+        extractCmd = {
+            "/usr/bin/unzip",
+            "-d",
+            dest,
+            std::string(file)
+        };
+    }
+    else if (type == "application/x-rar\n")
+    {
+        extractCmd = {
+            "/usr/bin/unrar",
+            "x",
+            std::format("-op{}", std::string(dest)),
+            std::string(file)
+        };
+    }
+    else
+    {
+        std::cout << "Unknown file type: " << type << std::endl;
+        return {};
+    }
+
+    DecompressFileResult result;
+    result.next = std::move(next);
+    ProcessTask task = CreateTask<AsyncProcessTask>(result);
+    task.task->args = std::move(extractCmd);
+    return task;
+}
+
+bool FindFomod(std::filesystem::path const & modPath, std::filesystem::path& out, std::filesystem::path & realRoot)
+{
+    std::filesystem::path fomod_dir;
+    bool foundFomod = false;
+    for (auto it = std::filesystem::recursive_directory_iterator(modPath); it != std::filesystem::recursive_directory_iterator(); ++it)
+    {
+        std::string fn = it->path().filename();
+        if (strcasecmp(fn.c_str(), "fomod") == 0)
+        {
+            if (it->is_directory())
+            {
+                fomod_dir = it->path();
+                foundFomod = true;
+            }
+            break;
+        }
+    }
+
+    if (!foundFomod)
+    {
+        return false;
+    }
+
+    // find ModuleConfig.xml
+    bool foundFomodConf = false;
+    std::filesystem::path fomodMC;
+    if (foundFomod)
+    {
+        std::filesystem::directory_iterator dit(fomod_dir);
+        for (; dit != std::filesystem::directory_iterator(); ++dit)
+        {
+            std::string fn = dit->path().filename();
+            int m = strcasecmp(fn.c_str(), "ModuleConfig.xml");
+            if (m == 0)
+            {
+                fomodMC = dit->path();
+                foundFomodConf = true;
+                break;
+            }
+        }
+    }
+
+    if (foundFomodConf && std::filesystem::is_regular_file(fomodMC))
+    {
+        out = fomodMC;
+        realRoot = fomod_dir.parent_path();
+        return true;
+    }
+    return false;
+}
+
+void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, FomodAuto::Config const & conf)
+{
+    if (mgr.cookingInstall.has_value())
+    {
+        return;
+    }
+
+    auto dl = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & dlr)
+    {
+        return dlr.modId == modId && dlr.fileId == fileId;
+    });
+
+    if (dl == mgr.downloadSessions.end())
+    {
+        return;
+    }
+    
+    
+    std::string fileStem = std::filesystem::path(dl->fileName).stem();
+    std::filesystem::path staging = mgr.config.projectDir / ".mod_staging";
+    std::filesystem::path inFile = mgr.config.projectDir / "download" / dl->fileName;
+
+    auto task = UnzipFile(inFile, staging / fileStem, [mgr = &mgr, staging, fileStem, confCap = conf, fileId, modId](bool succeeded) {
+        if (!succeeded)
+        {
+            mgr->cookingInstall.reset();
+            return;
+        }
+
+        std::filesystem::path modFolder = *WordExpand(mgr->config.modFolder);
+        std::filesystem::create_directories(modFolder / fileStem);
+        std::filesystem::path installDest = modFolder / fileStem;
+
+        auto dl = std::find_if(mgr->downloadSessions.begin(), mgr->downloadSessions.end(), [&](ModDownloadRt const & dlr)
+        {
+            return dlr.modId == modId && dlr.fileId == fileId;
+        });
+
+        if (dl->installType == ModInstallType::Data)
+        {
+            installDest /= "Data";
+        }
+        else if (dl->installType == ModInstallType::Root)
+        {
+            ; // noop
+        }
+
+        std::filesystem::path fomodPath;
+        std::filesystem::path realModRoot;
+        bool isFomod = FindFomod(staging / fileStem, fomodPath, realModRoot);
+
+        if (isFomod)
+        {
+            auto fmopt = fomod::Load(fomodPath);
+            if (!fmopt)
+            {
+                mgr->cookingInstall.reset();
+                return;
+            }
+
+            FomodAuto::Config conf = confCap;
+            fomod::Eval eval;
+
+            while (true)
+            {
+                fomod::SubstepInfo ss = fomod::PrepareSubstep(*fmopt, eval);
+                // TODO check file status?
+                bool visible = fomod::EvalSubstep(*fmopt, eval, ss);
+                if (visible)
+                {
+                    auto* step = conf.GetStep(ss.stepName);
+                    if (step)
+                    {
+                        auto* group = step->GetGroup(ss.name);
+                        if (group)
+                        {
+                            for (auto&& choice : ss.options)
+                            {
+                                auto* c = group->GetChoice(choice.name);
+                                choice.selected = false;
+                                if (c)
+                                {
+                                    choice.selected = true;
+                                }
+                            }
+                        }
+                    }
+                    bool applied = fomod::ApplySubstep(*fmopt, eval, ss);
+                    if (!applied)
+                    {
+                        std::cout << "Invalid fomod preset!" << std::endl;
+                        mgr->cookingInstall.reset();
+                        return;
+                    }
+                }
+
+                if (fomod::Configured(*fmopt, eval))
+                {
+                    break;
+                }
+            }
+            fomod::SubstepInfo ss = fomod::PrepareInstallActions(*fmopt, eval);
+            // TODO check file status?
+            auto actions = fomod::GetInstallActions(*fmopt, eval, ss);
+
+            // perform file actions
+            ApplyFomodFileActions(*mgr, actions, realModRoot, installDest);
+
+            // create mod entry
+            auto& mod = mgr->inst.mods.emplace_back();
+            mod.enabled = true;
+            mod.loadIndex = mgr->inst.mods.size() - 1;
+            mod.modFile = fileStem;
+
+            // remove staging
+            std::vector<std::string> rmCmd = {
+                "/usr/bin/rm",
+                "-r",
+                staging,
+            };
+            if (!LaunchProc(rmCmd, "/"))
+            {
+                std::cout << "Failed to delete fomod tmp dir: " << staging << std::endl;
+            }
+            
+        }
+        else
+        {
+            // otherwise create the mod entry and move mod into it
+            auto& mod = mgr->inst.mods.emplace_back();
+            mod.enabled = true;
+            mod.loadIndex = mgr->inst.mods.size() - 1;
+            mod.modFile = fileStem;
+            
+            MoveDirNormalizePaths(staging / fileStem, installDest);
+
+            mgr->cookingInstall.reset();
+        }
+
+        mgr->cookingInstall.reset();
+
+        DiscoverPlugins(*mgr);
+
+        SaveModMgr(*mgr);
+    });
+
+    mgr.cookingInstall = task;
+    task.Start(mgr.processEngine);
+}
 
 void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
 {
-    if (mgr.fomodState.has_value())
+    if (mgr.fomodState.has_value() || mgr.cookingInstall)
     {
         return;
     }
@@ -1027,6 +1317,15 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
             mgr.config.projectDir / "download" / modName
         };
     }
+    else if (type == "application/x-rar\n")
+    {
+        extractCmd = {
+            "/usr/bin/unrar",
+            "x",
+            std::format("-op{}", std::string(staging / fileStem)),
+            mgr.config.projectDir / "download" / modName
+        };
+    }
     else
     {
         std::cout << "Unknown file type: " << type << std::endl;
@@ -1039,43 +1338,50 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
         return;
     }
 
-    bool isFomod = false;
+    std::filesystem::path fomodPath;
+    std::filesystem::path realModRoot;
+    bool isFomod = FindFomod(staging / fileStem, fomodPath, realModRoot);
 
-    // check if there's a fomod
+    std::filesystem::path modFolder = *WordExpand(mgr.config.modFolder);
+    std::filesystem::create_directories(modFolder / fileStem);
+    std::filesystem::path installDest = modFolder / fileStem;
+    if (dl->installType == ModInstallType::Data)
     {
-        std::filesystem::path fomod_test = staging / fileStem / "FOMod";
-        if (std::filesystem::is_directory(fomod_test) & std::filesystem::is_regular_file(fomod_test / "ModuleConfig.xml"))
-        {
-            // initialize fomod
-            isFomod = true;
-            InitFomod(mgr, staging / fileStem, fileStem);
-        }
+        installDest /= "Data";
+    }
+    else if (dl->installType == ModInstallType::Root)
+    {
+        ; // noop
     }
 
-    if (!isFomod)
+    if (isFomod)
     {
-        // otherwise create the mod entry and move mod into it
-        auto& mod = mgr.inst.mods.emplace_back();
-        mod.enabled = true;
-        mod.loadIndex = mgr.inst.mods.size() - 1;
-        mod.modFile = fileStem;
-
-        std::filesystem::path modFolder = *WordExpand(mgr.config.modFolder);
-        std::filesystem::create_directories(modFolder / fileStem);
-        std::vector<std::string> mv = {
-            "/usr/bin/mv",
-            staging / fileStem,
-            "-T",
-            modFolder / fileStem / "Data"
-        };
-        if (!LaunchProc(mv, "/"))
+        InitFomod(mgr, staging / fileStem, realModRoot, fomodPath, installDest, fileStem);
+    }
+    else
+    {
+        if (MoveDirNormalizePaths(staging / fileStem, installDest))
         {
-            std::cout << "Failed to install mod files to " << modFolder / fileStem << std::endl;
-        }
+            auto& mod = mgr.inst.mods.emplace_back();
+            mod.enabled = true;
+            mod.loadIndex = mgr.inst.mods.size() - 1;
+            mod.modFile = fileStem;
 
-        DiscoverPlugins(mgr);
-        
-        SaveModMgr(mgr);
+            // remove staging
+            std::vector<std::string> rmCmd = {
+                "/usr/bin/rm",
+                "-r",
+                staging / fileStem
+            };
+            if (!LaunchProc(rmCmd, "/"))
+            {
+                std::cout << "Failed to delete fomod tmp dir: " << staging / fileStem << std::endl;
+            }
+
+            DiscoverPlugins(mgr);
+            
+            SaveModMgr(mgr);
+        }
     }
 
 }

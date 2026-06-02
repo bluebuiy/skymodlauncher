@@ -64,6 +64,7 @@ struct CurlEasyTask : public AsyncTask<CurlEasyTaskResult, CurlAsyncEngine>
 struct CurlTaskData
 {
     CURLcode code;
+    CURLMcode mcode;
     std::shared_ptr<AsyncTaskBase<CurlAsyncEngine>> task;
 };
 
@@ -74,6 +75,7 @@ public:
     std::mutex mt;
 
     std::unordered_map<CURL*, CurlTaskData> curlMap;
+    std::vector<CurlTaskData> failed;
 
     CurlAsyncEngine();
     ~CurlAsyncEngine();

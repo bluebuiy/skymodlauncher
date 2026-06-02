@@ -512,6 +512,7 @@ bool EvalSubstep(Fomod const & fm, Eval & eval, SubstepInfo & ss)
             ss.options.emplace_back(std::move(o));
         }
         ss.name = subStep.name;
+        ss.stepName = step.name;
         return true;
     }
     else

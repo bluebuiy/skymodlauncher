@@ -4,6 +4,7 @@
 #include "prochelper.h"
 #include "fomod_ui.h"
 #include "curlasync.h"
+#include "asyncproc.h"
 #include "nxmurl.h"
 #include "modmgr_collection.h"
 
@@ -54,6 +55,12 @@ struct ModExec
     bool updatePluginList = false;
 };
 
+enum class ModInstallType
+{
+    Data,
+    Root
+};
+
 struct ModInfo
 {
     bool enabled = false;
@@ -80,6 +87,7 @@ struct ModDownload
     int modId;
     int fileId;
     std::string game;
+    std::string installType;
 };
 
 struct ModMgrInst
@@ -113,12 +121,14 @@ struct ModDownloadRt
     std::filesystem::path outFile;
     std::string game;
     std::string fileName;
+    std::string hName;
     int modId;
     int fileId;
     std::string expires;
     std::string key;
     //std::string userId;
     ModDlState state = ModDlState::None;
+    ModInstallType installType = ModInstallType::Data;
 
     // imgui action cache
     bool remove = false;
@@ -158,6 +168,7 @@ struct ModMgr
     bool foundSkyrimIni = false;
 
     std::optional<FomodUI> fomodState;
+    std::optional<ProcessTask> cookingInstall;
 
     // 
 
@@ -167,8 +178,64 @@ struct ModMgr
 
     // TODO switch to weak ptr for external refs?
     std::shared_ptr<AsyncTaskProcessor<CurlAsyncEngine>> curlEngine;
+    std::shared_ptr<AsyncTaskProcessor<AsyncProcessEngine>> processEngine;
 
 };
+
+namespace FomodAuto
+{
+    struct Choice
+    {
+        std::string name;
+        int index = -1;
+    };
+
+    struct Group
+    {
+        std::string name;
+        std::vector<Choice> choices;
+        Choice* GetChoice(std::string const & name)
+        {
+            auto it = std::find_if(choices.begin(), choices.end(), [&](Choice const & s) { return s.name == name; });
+            if (it == choices.end())
+            {
+                return nullptr;
+            }
+            return &(*it);
+        }
+    };
+
+    struct Step
+    {
+        std::string name;
+        std::vector<Group> groups;
+        Group* GetGroup(std::string const & name)
+        {
+            auto it = std::find_if(groups.begin(), groups.end(), [&](Group const & s) { return s.name == name; });
+            if (it == groups.end())
+            {
+                return nullptr;
+            }
+            return &(*it);
+        }
+    };
+
+    struct Config
+    {
+        std::vector<Step> steps;
+        Step * GetStep(std::string const & name)
+        {
+            auto it = std::find_if(steps.begin(), steps.end(), [&](Step const & s) { return s.name == name; });
+            if (it == steps.end())
+            {
+                return nullptr;
+            }
+            return &(*it);
+        }
+    };
+
+}
+
 
 struct ExecToolProgram : public ProcInvoke
 {
@@ -202,7 +269,7 @@ void CheckNXMAction(ModMgr& mgr);
 void SetupNXMActionPipe(ModMgr& mgr);
 void CleanupNXMAction(ModMgr& mgr);
 void HandleNXMUrl(ModMgr& mgr, std::string const & urlStr);
-void StartNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url);
+void StartNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url, std::string const & name = "", ModInstallType type = ModInstallType::Data);
 void StartNXMCollectionInstall(ModMgr& mgr, NxmCollectionUrl const & url);
 
 void UpdateDownloads(ModMgr& mgr);

@@ -77,6 +77,8 @@ target_sources(skymodlaunch
         src/asyncengine.h
         src/curlasync.h
         src/curlasync.cpp
+        src/asyncproc.h
+        src/asyncproc.cpp
 )
 
 target_link_libraries(skymodlaunch

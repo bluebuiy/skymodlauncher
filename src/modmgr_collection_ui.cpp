@@ -38,12 +38,101 @@ void RenderCollectionWindow(ModMgr& mgr)
         }
         else if (mgr.collection.status == CollectionStatus::WaitingForInstallButton)
         {
-            ImGui::Text("Compressed Asset Size: %1.1f GB", ((float)mgr.collection.info.totalSize) / 1'000'000'000);
-            ImGui::Button("INSTALL");
+            ImGui::Text("Compressed Asset Size: %.1f GB", ((float)mgr.collection.info.totalSize) / 1'000'000'000);
+            bool doInstall = ImGui::Button("INSTALL");
             ImGui::Text("%s", mgr.collection.info.name.c_str());
             ImGui::TextWrapped("%s", mgr.collection.info.summary.c_str());
             ImGui::TextWrapped("%s", mgr.collection.info.description.c_str());
+
+            if (doInstall)
+            {
+                GetCollectionBundleLink(mgr);
+            }
         }
+        else if (mgr.collection.status == CollectionStatus::FetchingBundleLink)
+        {
+            if (mgr.collection.error)
+            {
+                if (ImGui::Button("Retry"))
+                {
+                    GetCollectionBundleLink(mgr);
+                }
+            }
+            else
+            {
+                ImGui::Text("Fetching bundle info");
+            }
+        }
+        else if (mgr.collection.status == CollectionStatus::DownloadingBundle)
+        {
+            if (mgr.collection.error)
+            {
+                if (ImGui::Button("Retry"))
+                {
+                    DownloadCollectionBundle(mgr);
+                }
+            }
+            else
+            {
+                ImGui::Text("Downloading bundle ");
+            }
+        }
+        else if (mgr.collection.status == CollectionStatus::DownloadingMods)
+        {
+            if (mgr.collection.error)
+            {
+                if (ImGui::Button("Retry"))
+                {
+                    DownloadCollectionMods(mgr);
+                }
+                ImGui::Text("Will only re-download failed mods");
+            }
+            else
+            {
+                ImGui::Text("Downloading mods");
+                int count = 0;
+                int err = 0;
+                for (auto dl : mgr.downloadSessions)
+                {
+                    if (dl.state != ModDlState::Complete)
+                    {
+                        ++count;
+                    }
+                    if (dl.state == ModDlState::Error || dl.state == ModDlState::Canceled)
+                    {
+                        ++err;
+                    }
+                }
+                ImGui::Text("Waiting for %d remaining mods to download", count);
+                ImGui::Text("%d mods failed", err);
+                if (count == err)
+                {
+                    if (err > 0)
+                    {
+                        mgr.collection.error = true;
+                    }
+                    else
+                    {
+                        InstallCollectionMods(mgr);
+                    }
+                }
+            }
+        }
+        else if (mgr.collection.status == CollectionStatus::InstallingMods)
+        {
+            if (mgr.collection.error)
+            {
+                if (ImGui::Button("Retry"))
+                {
+                    InstallCollectionMods(mgr);
+                }
+            }
+            else
+            {
+                ImGui::Text("Installing mods");
+            }
+        }
+        
 
     }
     ImGui::End();

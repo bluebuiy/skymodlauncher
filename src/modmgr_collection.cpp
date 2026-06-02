@@ -4,7 +4,9 @@
 #include "curlasync.h"
 #include "modmgr.h"
 
+#include <format>
 #include <iostream>
+#include <fstream>
 
 struct ColInfoDlFinished
 {
@@ -12,6 +14,19 @@ struct ColInfoDlFinished
     NxmCollectionUrl colUrl;
     void operator()(CurlEasyTaskResult& result);
 };
+
+struct ColLinkDlFinished
+{
+    ModMgr* mgr = nullptr;
+    void operator()(CurlEasyTaskResult& result);
+};
+
+struct ColBundleDlFinished
+{
+    ModMgr* mgr = nullptr;
+    void operator()(CurlEasyTaskResult& result);
+};
+
 
 
 constexpr char NXM_GQL_ENDPOINT[] = "https://api.nexusmods.com/v2/graphql";
@@ -72,7 +87,7 @@ void ColInfoDlFinished::operator()(CurlEasyTaskResult& result)
 
         str_to_int64(data.at("totalSize").get<std::string>(), mgr->collection.info.totalSize);
         mgr->collection.info.modCount = data.at("modCount").get<int>();
-        mgr->collection.info.downloadLink = data.at("downloadLink").get<std::string>();
+        mgr->collection.info.downloadLinkLink = data.at("downloadLink").get<std::string>();
         mgr->collection.info.description = col.at("description").get<std::string>();
         mgr->collection.info.name = col.at("name").get<std::string>();
         mgr->collection.info.summary = col.at("summary").get<std::string>();
@@ -83,6 +98,70 @@ void ColInfoDlFinished::operator()(CurlEasyTaskResult& result)
     {
         mgr->collection.error = true;
     }
+}
+
+void ColLinkDlFinished::operator()(CurlEasyTaskResult& result)
+{
+    if (result.canceled || result.cError != CURLE_OK || result.httpCode != 200)
+    {
+        std::cout << "Failed to fetch collection bundle link: " << result.cError << " " << result.httpCode << " " << result.canceled << std::endl;
+        mgr->collection.error = true;
+        return;
+    }
+
+    auto jr = nlohmann::json::parse(result.data, nullptr, false);
+    if (!jr.is_object())
+    {
+        std::cout << "Invalid json" << std::endl;
+        mgr->collection.error = true;
+        return;
+    }
+    std::string link;
+    try
+    {
+        link = jr.at("download_links").at(0).at("URI").get<std::string>();
+    }
+    catch (...)
+    {
+        std::cout << "Failed to extract download link" << std::endl;
+        mgr->collection.error = true;
+        return;
+    }
+    mgr->collection.info.downloadLink = link;
+    mgr->collection.status = CollectionStatus::DownloadingBundle;
+
+    DownloadCollectionBundle(*mgr);
+}
+
+void ColBundleDlFinished::operator()(CurlEasyTaskResult& result)
+{
+    if (result.canceled || result.cError != CURLE_OK || result.httpCode != 200)
+    {
+        std::cout << "Failed to download collection bundle: " << result.cError << " " << result.httpCode << " " << result.canceled << std::endl;
+        mgr->collection.error = true;
+        return;
+    }
+
+    result.file.destroy();
+
+    std::string ccname = std::format("{}-{}", mgr->collection.url.slug, mgr->collection.url.rev);
+    std::filesystem::path outDir = mgr->config.projectDir / ".mod_staging" / ccname;
+    std::vector<std::string> extractCmd = {
+        "/usr/bin/7z",
+        "-y",
+        "x",
+        std::format("-o{}", std::string(outDir)),
+        mgr->config.projectDir / "download" / ccname
+    };
+
+    if (!LaunchProc(extractCmd, "/"))
+    {
+        std::cout << "Failed to extract bundle" << std::endl;
+        mgr->collection.error = true;
+        return;
+    }
+
+    DownloadCollectionMods(*mgr);
 }
 
 // TODO add markdown renderer: https://github.com/enkisoftware/imgui_markdown.git
@@ -137,8 +216,6 @@ void StartNXMCollectionInstall(ModMgr& mgr, NxmCollectionUrl const & url)
     std::stringstream ss;
     ss << payload;
     task.task->postDataStr = ss.str();
-
-    std::cout << task.task->postDataStr << std::endl;
     
     task.task->type = HttpType::Post;
     task.task->SetHeader("apikey", mgr.config.nexusApiKey);
@@ -146,6 +223,128 @@ void StartNXMCollectionInstall(ModMgr& mgr, NxmCollectionUrl const & url)
     task.task->contentType = "application/json";
 
     task.Start(mgr.curlEngine);
+
+}
+
+void GetCollectionBundleLink(ModMgr& mgr)
+{
+    ColLinkDlFinished res;
+    res.mgr = &mgr;
+
+    auto task = CreateTask<CurlEasyTask>(std::move(res));
+    task.task->SetHeader("apikey", mgr.config.nexusApiKey);
+    std::string url = std::format("https://api.nexusmods.com{}", mgr.collection.info.downloadLinkLink);
+    task.task->SetUrl(url.c_str());
+    task.task->type = HttpType::Get;
+
+    mgr.collection.status = CollectionStatus::FetchingBundleLink;
+    task.Start(mgr.curlEngine);
+}
+
+void DownloadCollectionBundle(ModMgr& mgr)
+{
+    std::cout << "Downloading collection bundle at " << mgr.collection.info.downloadLink << std::endl;
+
+    ColBundleDlFinished res;
+
+    res.mgr = &mgr;
+
+    auto task = CreateTask<CurlEasyTask>(std::move(res));
+    task.task->SetHeader("apikey", mgr.config.nexusApiKey);
+    task.task->SetUrl(mgr.collection.info.downloadLink.c_str());
+    task.task->type = HttpType::Get;
+    std::filesystem::path colbundlePath = mgr.config.projectDir / "download" / std::format("{}-{}", mgr.collection.url.slug, mgr.collection.url.rev);
+    std::cout << "Saving bundle at " << colbundlePath << std::endl;
+    std::filesystem::create_directories(colbundlePath.parent_path());
+    FileWrapper fw = fopen(colbundlePath.c_str(), "wb");
+    if (!fw)
+    {
+        std::cout << "Failed to open bundle file" << std::endl;
+        return;
+    }
+    task.task->file = std::move(fw);
+    mgr.collection.status = CollectionStatus::DownloadingBundle;
+    task.Start(mgr.curlEngine);
+}
+
+void DownloadCollectionMods(ModMgr& mgr)
+{
+    auto bundlePath = mgr.config.projectDir / ".mod_staging" / std::format("{}-{}", mgr.collection.url.slug, mgr.collection.url.rev) / "collection.json";
+    std::ifstream bundleFile(bundlePath);
+    if (!bundleFile)
+    {
+        std::cout << "Failed to load collection definition " << bundlePath << std::endl;
+        mgr.collection.error = true;
+        return;
+    }
+
+    mgr.collection.bundleDefinition = nlohmann::json::parse(bundleFile, nullptr, false);
+    bundleFile.close();
+    if (mgr.collection.bundleDefinition.is_discarded())
+    {
+        std::cout << "Invalid json in bundle definition" << std::endl;
+        mgr.collection.error = true;
+        return;
+    }
+
+    std::string game = mgr.collection.bundleDefinition["info"]["domainName"];
+
+    for (auto&& mod : mgr.collection.bundleDefinition["mods"])
+    {
+        if (mod["source"]["type"].get<std::string>() != "nexus")
+        {
+            std::cout << "Skipping non-nexus mod: " << mod["name"].get<std::string>();
+            continue;
+        }
+        int modId = mod["source"]["modId"].get<int>();
+        int fileId = mod["source"]["fileId"].get<int>();
+        auto it = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [modId, fileId](ModDownloadRt const & dl){
+            return dl.fileId == fileId && dl.modId == modId;
+        });
+        std::string type = mod["details"]["type"].get<std::string>();
+        ModInstallType installType = ModInstallType::Data;
+        if (type == "dinput" || type == "enb")
+        {
+            installType = ModInstallType::Root;
+        }
+        else if (!type.empty())
+        {
+            std::cout << "Unknown install type: " << type << std::endl;
+        }
+        std::string modDomain = mod["domainName"].get<std::string>();
+        if (it == mgr.downloadSessions.end())
+        {
+            NxmModFileUrl fileUrl;
+            fileUrl.game = modDomain;
+            fileUrl.fileId = fileId;
+            fileUrl.modId = modId;
+            StartNXMModDownload(mgr, fileUrl, mod["name"].get<std::string>(), installType);
+        }
+        else if (it->state == ModDlState::ModPaused)
+        {
+            // pause doenst do anything yet but just in case
+            it->unpause = true;
+        }
+        else if (it->state != ModDlState::Complete && it->state != ModDlState::ModDownload && it->state != ModDlState::UrlQuery)
+        {
+            // sneakily rename and delete it so we can try to redownload it
+            it->remove = true;
+            it->modId = -1;
+            it->fileId = -1;
+
+            NxmModFileUrl fileUrl;
+            fileUrl.game = modDomain;
+            fileUrl.fileId = fileId;
+            fileUrl.modId = modId;
+            StartNXMModDownload(mgr, fileUrl, mod["name"].get<std::string>(), installType);
+        }
+    }
+
+    mgr.collection.status = CollectionStatus::DownloadingMods;
+}
+
+void InstallCollectionMods(ModMgr& mgr)
+{
 
 }
 

@@ -115,6 +115,7 @@ namespace nlohmann
         JPUT(j, md, modId);
         JPUT(j, md, fileId);
         JPUT(j, md, game);
+        JPUT(j, md, installType);
     }
 
     void adl_serializer<ModDownload>::from_json(json const & j, ModDownload& md)
@@ -123,6 +124,7 @@ namespace nlohmann
         JPULL(j, md, modId);
         JPULL(j, md, fileId);
         JPULL(j, md, game);
+        JPULL(j, md, installType);
     }
 }
 

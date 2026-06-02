@@ -67,6 +67,13 @@ void CurlEasyTask::Start(CurlAsyncEngine& env)
             taskData.task = this->shared_from_this();
             env.curlMap.emplace(ez, std::move(taskData));
         }
+        else
+        {
+            CurlTaskData taskData;
+            taskData.mcode = merr;
+            taskData.task = this->shared_from_this();
+            env.failed.push_back(taskData);
+        }
     }
     env.mt.unlock();
 }
@@ -121,6 +128,7 @@ void CurlEasyTask::SetHeader(std::string const & name, std::string const & value
 
 void CurlEasyTask::ClearHeaders()
 {
+    curl_easy_setopt(ez, CURLOPT_HTTPHEADER, nullptr);
     curl_slist_free_all(headers);
     headers = nullptr;
 }
@@ -141,8 +149,14 @@ void CurlAsyncEngine::update(ProcessorUpdate<CurlAsyncEngine>& result)
     int rh = 0;
     CURLMcode merr = curl_multi_perform(multi, &rh);
 
-    auto _ = do_lock(mt);
     {
+        auto _ = do_lock(mt);
+        for (auto&& f : failed)
+        {
+            result.completedTaskList.emplace_back(std::move(f.task));
+        }
+        failed.clear();
+
         int msgRem = 0;
         while (CURLMsg* msg = curl_multi_info_read(multi, &msgRem))
         {
