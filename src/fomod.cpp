@@ -16,6 +16,17 @@ bool is(pugi::xml_node const & n, char const * name)
     return std::strcmp(n.name(), name) == 0;
 }
 
+void convert_path(std::string & path)
+{
+    for (auto&& c : path)
+    {
+        if (c == '\\')
+        {
+            c = '/';
+        }
+    }
+}
+
 ConditionNodeType loadConditionType(pugi::xml_node const & node)
 {
     std::string v = node.attribute("operator").as_string();
@@ -174,6 +185,10 @@ FileInstall loadFileInstall(pugi::xml_node const & node, FileAction action)
     result.alwaysInstall = node.attribute("alwaysInstall").as_bool();
     result.installIfUsable = node.attribute("installIfUsable").as_bool();
     result.priority = node.attribute("priority").as_int();
+    result.action = action;
+
+    convert_path(result.source);
+    convert_path(result.destination);
     
     return result;
 }
@@ -388,18 +403,15 @@ bool EvaluateCond(ConditionTreeNode const & node, Eval const & eval, SubstepInfo
                 status = it->second;
             }
             b = status == dep.status;
-            std::cout << "FOMOD: File dep: " << dep.file << " -> " << (b ? "matched" : "unmatched") << std::endl;
         }
         else if (std::holds_alternative<ConditionTreeNode>(n))
         {  
            b = EvaluateCond(std::get<ConditionTreeNode>(n), eval, ss, flags);
-           std::cout << "FOMOD: Compound cond: " << b << std::endl;
         }
         else if (std::holds_alternative<FlagCondition>(n))
         {
             auto& fc = std::get<FlagCondition>(n);
             b = fc.value == flags.GetFlag(fc.key);
-            std::cout << "FOMOD: Flag cond: " << fc.key << flags.GetFlag(fc.key);
         }
         if (node.type == ConditionNodeType::And)
         {
@@ -498,7 +510,6 @@ bool EvalSubstep(Fomod const & fm, Eval & eval, SubstepInfo & ss)
             for (auto&& cuse : opt.useCondition.conditionalUsability)
             {
                 bool matches = EvaluateCond(cuse.condition, eval, ss, flags);
-                std::cout << "FOMOD: Option: " << opt.name << " -> " << matches << std::endl;
                 if (matches)
                 {
                     o.usability = cuse.use;
@@ -592,7 +603,6 @@ bool ApplySubstep(Fomod const & fm, Eval & eval, SubstepInfo & ss)
                 newSubState.choices.add(i);
                 for (auto&& f : subStep.selections[i].setFlags)
                 {
-                    std::cout << "FOMOD: Set flag: " << f.key << " -> " << f.value << std::endl;
                     newSubState.setFlags.SetFlag(f.key, f.value);
                 }
             }
@@ -600,8 +610,6 @@ bool ApplySubstep(Fomod const & fm, Eval & eval, SubstepInfo & ss)
     }
 
     eval.stepCache[eval.currentStep].substeps.emplace_back(std::move(newSubState));
-
-    std::cout << "Completed step " << eval.currentStep << ", " << eval.currentSubStep << std::endl;
 
     ++eval.currentSubStep;
     if (eval.currentSubStep == step.subSteps.size())

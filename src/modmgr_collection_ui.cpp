@@ -113,7 +113,8 @@ void RenderCollectionWindow(ModMgr& mgr)
                     }
                     else
                     {
-                        InstallCollectionMods(mgr);
+                        mgr.collection.installIndex = -1;
+                        mgr.collection.status = CollectionStatus::InstallingMods;
                     }
                 }
             }
@@ -124,12 +125,16 @@ void RenderCollectionWindow(ModMgr& mgr)
             {
                 if (ImGui::Button("Retry"))
                 {
-                    InstallCollectionMods(mgr);
+                    mgr.collection.installIndex = -1;
+                    mgr.collection.status = CollectionStatus::InstallingMods;
                 }
+                ImGui::Text("%d mods failed to install", (int)mgr.collection.installErrorInfo.size());
             }
             else
             {
                 ImGui::Text("Installing mods");
+                ImGui::Text("%s", mgr.collection.installingCurrentMod.c_str());
+                UpdateInstallCollectionMods(mgr);
             }
         }
         

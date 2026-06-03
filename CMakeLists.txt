@@ -55,7 +55,6 @@ target_sources(skymodlaunch
         external/nlohmann/json.hpp
 
         src/imgui.h
-        src/json.hpp
         src/filewrapper.h
         src/main.cpp
         src/modmgr.h

@@ -338,13 +338,88 @@ void DownloadCollectionMods(ModMgr& mgr)
             fileUrl.modId = modId;
             StartNXMModDownload(mgr, fileUrl, mod["name"].get<std::string>(), installType);
         }
+        else
+        {
+            it->fileId = fileId;;
+            it->modId = modId;
+            it->hName = mod["name"].get<std::string>();
+        }
     }
 
     mgr.collection.status = CollectionStatus::DownloadingMods;
 }
 
-void InstallCollectionMods(ModMgr& mgr)
+void __attribute__((optimize("O0"))) UpdateInstallCollectionMods(ModMgr& mgr)
 {
+    if (mgr.cookingInstall.has_value() || mgr.fomodState.has_value())
+    {
+        return;
+    }
+    mgr.collection.installingCurrentMod.clear();
+    int nextMod = mgr.collection.installIndex + 1;
+    if (nextMod >= mgr.collection.bundleDefinition["mods"].size())
+    {
+        mgr.collection.installIndex = -1;
+        mgr.collection.status = CollectionStatus::ConfigureLoadOrder;
+        return;
+    }
+    ++mgr.collection.installIndex;
+    auto modInfo = mgr.collection.bundleDefinition["mods"][nextMod];
+
+    int modId = modInfo["source"]["modId"].get<int>();
+    int fileId = modInfo["source"]["fileId"].get<int>();
+
+    auto it = std::find_if(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const & m){
+        return m.modId == modId && m.fileId == fileId;
+    });
+
+    if (it != mgr.inst.mods.end())
+    {
+        std::cout << "Skipping installed mod: " << modInfo["name"].get<std::string>() << std::endl;
+        return;
+    }
+
+    mgr.collection.installingCurrentMod = modInfo["name"].get<std::string>();
+    std::cout << "Intalling mod: " << mgr.collection.installingCurrentMod << std::endl;
+
+    FomodAuto::Config fomodConfig;
+    bool confGood = true;
+    if (modInfo.contains("choices"))
+    {
+        try
+        {
+            for (auto&& step : modInfo["choices"]["options"])
+            {
+                auto& stepData = fomodConfig.steps.emplace_back();
+                stepData.name = step["name"].get<std::string>();
+                for (auto&& group : step["groups"])
+                {
+                    auto& groupData = stepData.groups.emplace_back();
+                    groupData.name = group["name"].get<std::string>();
+                    for (auto&& choice : group["choices"])
+                    {
+                        auto& choiceData = groupData.choices.emplace_back();
+                        choiceData.index = choice["idx"].get<int>();
+                        choiceData.name = choice["name"].get<std::string>();
+                    }
+                }
+            }
+        }
+        catch (...)
+        {
+            confGood = false;
+            mgr.collection.installErrorInfo.emplace_back(modInfo["name"].get<std::string>());
+        }
+    }
+
+    if (confGood)
+    {
+        InstallDownloadedFile(mgr, fileId, modId, fomodConfig);
+    }
+    else
+    {
+        std::cout << "Failed to load fomod configuration for " << it->modFile << std::endl;
+    }
 
 }
 

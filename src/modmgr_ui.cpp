@@ -581,6 +581,7 @@ void RenderModMgr(ModMgr& mgr)
         {
             DeleteMod(mgr, mgr.inst.mods[del].modFile);
             mgr.inst.mods.erase(mgr.inst.mods.begin() + del);
+            CorrectLoadIndexes(mgr);
         }
         else if (mvUp != -1)
         {
@@ -608,7 +609,11 @@ void RenderModMgr(ModMgr& mgr)
             }
             mgr.inst.mods[mvDown].loadIndex++;
         }
-        SaveModMgr(mgr);
+        if (mvDown != -1 || mvUp != -1)
+        {
+            CorrectLoadIndexes(mgr);
+            SaveModMgr(mgr);
+        }
     }
     ImGui::End();
 

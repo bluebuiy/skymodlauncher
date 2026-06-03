@@ -18,6 +18,9 @@ namespace nlohmann
         JPUT(j, mi, enabled);
         JPUT(j, mi, loadIndex);
         JPUT(j, mi, modFile);
+        JPUT(j, mi, modId);
+        JPUT(j, mi, fileId);
+        JPUT(j, mi, hName);
     }
 
     void adl_serializer<ModInfo>::from_json(json const & j, ModInfo& mi)
@@ -25,6 +28,9 @@ namespace nlohmann
         JPULL(j, mi, enabled);
         JPULL(j, mi, loadIndex);
         JPULL(j, mi, modFile);
+        JPULL(j, mi, modId);
+        JPULL(j, mi, fileId);
+        JPULL(j, mi, hName);
     }
 
     void adl_serializer<ModMgrConfig>::to_json(json& j, ModMgrConfig const & cfg)
@@ -116,6 +122,7 @@ namespace nlohmann
         JPUT(j, md, fileId);
         JPUT(j, md, game);
         JPUT(j, md, installType);
+        JPUT(j, md, hFileName);
     }
 
     void adl_serializer<ModDownload>::from_json(json const & j, ModDownload& md)
@@ -125,6 +132,7 @@ namespace nlohmann
         JPULL(j, md, fileId);
         JPULL(j, md, game);
         JPULL(j, md, installType);
+        JPULL(j, md, hFileName);
     }
 }
 

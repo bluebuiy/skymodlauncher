@@ -119,11 +119,11 @@ std::optional<std::string> WordExpand2(std::string const & in)
 
 bool ExecArgs(std::vector<std::string> & args)
 {
-    std::cout << "Execv " << args[0] << std::endl;
+    //std::cout << "Execv " << args[0] << std::endl;
     std::vector<char *> argsv;
     for (int i = 0; i < args.size(); ++i)
     {
-        std::cout << "    " << args[i] << std::endl;
+        //std::cout << "    " << args[i] << std::endl;
         argsv.push_back(args[i].data());
     }
     argsv.push_back(nullptr);
@@ -143,12 +143,12 @@ bool LaunchProc(std::vector<std::string> & cmd, std::string const & wd)
         return false;
     }
 
-    std::cout << "Executing proc: " << cmd[0] << std::endl;
+    //std::cout << "Executing proc: " << cmd[0] << std::endl;
 
     std::vector<char *> args;
     for (int i = 0; i < cmd.size(); ++i)
     { 
-        std::cout << "    " << cmd[i] << std::endl;
+        //std::cout << "    " << cmd[i] << std::endl;
         args.push_back(cmd[i].data());
     }
     args.push_back(nullptr);
@@ -165,7 +165,7 @@ bool LaunchProc(std::vector<std::string> & cmd, std::string const & wd)
         int cd = wd.size() ? chdir(wd.c_str()) : 0;
         if (cd == 0)
         {
-            std::cout << "execv " << cmd[0] << std::endl;
+            //std::cout << "execv " << cmd[0] << std::endl;
             if (!execv(cmd[0].data(), args.data()))
             {
                 std::cout << "Failed to launch process" << std::endl;
@@ -202,7 +202,7 @@ std::optional<std::string> LaunchProcForOutput(std::vector<std::string> & cmd, s
         return {};
     }
 
-    std::cout << "Executing proc: " << cmd[0] << std::endl;
+    //std::cout << "Executing proc: " << cmd[0] << std::endl;
     int ppp[2];
     if (pipe(ppp) < 0)
     {
@@ -281,7 +281,7 @@ std::optional<std::vector<std::string>> LaunchProcParsePrint0(std::vector<std::s
         return {};
     }
 
-    std::cout << "Executing proc: " << cmd[0] << std::endl;
+    //std::cout << "Executing proc: " << cmd[0] << std::endl;
     int ppp[2];
     if (pipe(ppp) < 0)
     {

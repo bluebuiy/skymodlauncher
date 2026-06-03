@@ -8,7 +8,14 @@
 #include <iostream>
 #include <format>
 
-bool InitFomod(ModMgr & mgr, std::filesystem::path const & tmpDir, std::filesystem::path const & realRoot, std::filesystem::path const & fomodConf, std::filesystem::path const & installDst, std::string const & modName)
+bool InitFomod(
+    ModMgr & mgr,
+    std::filesystem::path const & tmpDir,
+    std::filesystem::path const & realRoot,
+    std::filesystem::path const & fomodConf,
+    std::filesystem::path const & installDst,
+    ModFileRef const & modFile
+)
 {
     if (mgr.fomodState.has_value())
     {
@@ -17,6 +24,15 @@ bool InitFomod(ModMgr & mgr, std::filesystem::path const & tmpDir, std::filesyst
     }
 
     std::filesystem::path fomdPath = fomodConf;
+
+    auto downloadData = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & m){
+        return m.fileId == modFile.fileId && m.modId == modFile.modId;
+    });
+
+    if (downloadData == mgr.downloadSessions.end())
+    {
+        return false;
+    }
 
     auto ld = fomod::Load(fomdPath);
 
@@ -35,8 +51,11 @@ bool InitFomod(ModMgr & mgr, std::filesystem::path const & tmpDir, std::filesyst
     mgr.fomodState->tmpDir = tmpDir;
 
     // TODO load the info file
-    mgr.fomodState->name = modName;
+    mgr.fomodState->hName = downloadData->hName;
+    mgr.fomodState->name = std::filesystem::path(downloadData->fileName).stem();
     mgr.fomodState->openPopup = true;
+    mgr.fomodState->fileId = downloadData->fileId;
+    mgr.fomodState->modId = downloadData->modId;
 
     return true;
 }
@@ -74,6 +93,7 @@ void RenderFomod(ModMgr& mgr)
         {
             doStage = true;
         }
+        ImGui::Text("%s", fomod.hName);
     }
     else if (fomod.stage == FomodStage::Steps)
     {
@@ -95,10 +115,8 @@ void RenderFomod(ModMgr& mgr)
         }
         else
         {
-            //ImGui::BeginChild("4fdsl");
             ImGui::Button("Image placeholder!", ImVec2(100, 60));
             ImGui::TextWrapped("%s", fomod.ssInfo.options[fomod.hoveredOption].optionText.c_str());
-            //ImGui::EndChild();
         }
 
         ImGui::TableSetColumnIndex(1);
@@ -254,6 +272,9 @@ void RenderFomod(ModMgr& mgr)
         mod.enabled = true;
         mod.loadIndex = mgr.inst.mods.size() - 1;
         mod.modFile = fomod.name;
+        mod.fileId = fomod.fileId;
+        mod.modId = fomod.modId;
+        mod.hName = fomod.hName;
 
         // remove staging
         std::vector<std::string> rmCmd = {
@@ -316,6 +337,7 @@ bool MoveDirNormalizePaths(std::filesystem::path const & src, std::filesystem::p
 {
     try
     {
+        std::filesystem::create_directories(dst);
         std::vector<DirNormListing> stack;
         {
             auto& next = stack.emplace_back();
@@ -379,6 +401,29 @@ bool MoveDirNormalizePaths(std::filesystem::path const & src, std::filesystem::p
     return true;
 }
 
+std::filesystem::path FindCasedPath(std::filesystem::path const & pathIn)
+{
+    auto path = pathIn;
+    path.make_preferred();
+    auto pi = path.begin();
+    std::filesystem::path result = *pi;
+    ++pi;
+    while (pi != path.end())
+    {
+        for (auto it = std::filesystem::directory_iterator(result); it != std::filesystem::directory_iterator(); ++it)
+        {
+            //std::cout << it->path() << "   " << result << "   " << *pi << std::endl;
+            if (0 == strcasecmp(it->path().filename().c_str(), pi->c_str()))
+            {
+                result = it->path();
+                break;
+            }
+        }
+        ++pi;
+    }
+    return result;
+}
+
 bool ApplyFomodFileActions(ModMgr & mgr, fomod::InstallActions & fileActions, std::filesystem::path const & staging, std::filesystem::path const & prefix)
 {
     bool success = true;
@@ -393,11 +438,14 @@ bool ApplyFomodFileActions(ModMgr & mgr, fomod::InstallActions & fileActions, st
         {
             try
             {
-                std::filesystem::path dstPath = prefix / NormalizePath(action.to);
+                std::filesystem::path fromPath = action.from;
+                std::filesystem::path toPath = action.to;
+                std::filesystem::path dstPath = prefix / std::filesystem::path(NormalizePath(toPath));
+                std::filesystem::path realFrom = FindCasedPath(staging / std::filesystem::path(fromPath));
                 if (!std::filesystem::exists(dstPath))
                 {
-                    std::filesystem::create_directories(dstPath);
-                    std::filesystem::create_hard_link(staging, prefix / NormalizePath(action.to));
+                    std::filesystem::create_directories(dstPath.parent_path());
+                    std::filesystem::create_hard_link(realFrom, prefix / std::filesystem::path(NormalizePath(toPath)));
                 }
             }
             catch (std::filesystem::filesystem_error const & err)
@@ -411,9 +459,12 @@ bool ApplyFomodFileActions(ModMgr & mgr, fomod::InstallActions & fileActions, st
         }
         else if (action.action == fomod::FileAction::DirToDir)
         {
-            std::string normTo = NormalizePath(action.to);
+            std::filesystem::path realFrom = FindCasedPath(staging / std::filesystem::path(action.from));
+            std::filesystem::path normTo = NormalizePath(action.to);
+            realFrom.make_preferred();
+            normTo.make_preferred();
             std::filesystem::create_directories(prefix / normTo);
-            if (!MoveDirNormalizePaths(staging / action.from, prefix / normTo))
+            if (!MoveDirNormalizePaths(realFrom, prefix / normTo))
             {
                 success = false;
                 std::cout << "!!!!!!!!!!!! Failed to install correctly!" << std::endl;

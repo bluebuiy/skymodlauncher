@@ -13,6 +13,11 @@
 #include <filesystem>
 #include <curl/curl.h>
 
+struct ModFileRef
+{
+    int modId = 0;
+    int fileId = 0;
+};
 
 struct ModMgrConfig
 {
@@ -65,7 +70,10 @@ struct ModInfo
 {
     bool enabled = false;
     int loadIndex = -1;
+    int modId = 0;
+    int fileId = 0;
     std::string modFile;
+    std::string hName;
     std::vector<std::string> plugins;
 };
 
@@ -88,11 +96,12 @@ struct ModDownload
     int fileId;
     std::string game;
     std::string installType;
+    std::string hFileName;
 };
 
 struct ModMgrInst
 {
-    static constexpr int VERSION = 1;
+    static constexpr int VERSION = 2;
 
     int version = 0;
     std::vector<ModInfo> mods;
@@ -250,6 +259,8 @@ void RenderModMgr(ModMgr& mgr);
 
 void SaveModMgr(ModMgr& mgr);
 
+void CorrectLoadIndexes(ModMgr& mgr);
+
 bool LoadModMgr(ModMgr& mgr, std::string const& filePath, bool createNew);
 
 
@@ -276,6 +287,7 @@ void UpdateDownloads(ModMgr& mgr);
 
 void DeleteMod(ModMgr& mgr, std::string & modFile);
 
+void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, FomodAuto::Config const & conf);
 void InstallDownloadedFile(ModMgr& mgr, std::string const & modName);
 
 void InitMgr(ModMgr& mgr);

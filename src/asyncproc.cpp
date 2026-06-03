@@ -4,6 +4,7 @@
 
 #include <signal.h>
 #include <sys/wait.h>
+#include <iostream>
 
 AsyncProcessTask::~AsyncProcessTask()
 {
@@ -19,13 +20,14 @@ void AsyncProcessTask::Start(AsyncProcessEngine& env)
     int pid = fork();
     if (pid == 0)
     {
-        if (!ExecThisProcessUnshared(this->args))
+        if (!ExecArgs(this->args))
         {
             exit(1);
         }
     }
     else if (pid != -1)
     {
+        this->pid = pid;
         auto _lg = do_lock(env.mt);
         auto& p = env.procs.emplace_back();
         p.pid = pid;
@@ -87,7 +89,7 @@ void AsyncProcessEngine::update(ProcessorUpdate<AsyncProcessEngine>& result)
         for (int i = 0; i < procs.size(); ++i)
         {
             int status = 0;
-            if (waitpid(procs[i].pid, &status, WNOHANG | WUNTRACED) == 0)
+            if (waitpid(procs[i].pid, &status, WNOHANG | WUNTRACED) == procs[i].pid)
             {
                 bool done = false;
                 if (WIFEXITED(status))
@@ -110,6 +112,11 @@ void AsyncProcessEngine::update(ProcessorUpdate<AsyncProcessEngine>& result)
             }
             else
             {
+                int e = errno;
+                if (e != EAGAIN)
+                {
+                    std::cout << errno << std::endl;
+                }
                 // err, idk what to do rn
             }
         }

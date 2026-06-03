@@ -116,6 +116,7 @@ void DiscoverPlugins(ModMgr& mgr)
 ModDownload MdFromRt(ModDownloadRt const & mdrt)
 {
     ModDownload ret;
+    ret.hFileName = mdrt.hName;
     ret.fileName = mdrt.fileName;
     ret.fileId = mdrt.fileId;
     ret.modId = mdrt.modId;
@@ -127,6 +128,7 @@ ModDownload MdFromRt(ModDownloadRt const & mdrt)
 ModDownloadRt MdrtFromMd(ModDownload const & md)
 {
     ModDownloadRt ret;
+    ret.hName = md.hFileName;
     ret.fileName = std::move(md.fileName);
     ret.fileId = md.fileId;
     ret.modId = md.modId;
@@ -965,6 +967,7 @@ void UpdateDownloads(ModMgr& mgr)
     }
 
     mgr.curlEngine->Update();
+    mgr.processEngine->Update();
 
 }
 
@@ -1013,30 +1016,41 @@ ProcessTask UnzipFile(std::filesystem::path const & file, std::filesystem::path 
     std::vector<std::string> extractCmd;
     std::string type = *out;
 
-    if (type == "application/x-7z-compressed\n")
+    if (type == "application/x-7z-compressed\n" || type == "application/zip\n")
     {
         // 7z creates missing directories
         extractCmd = {
             "/usr/bin/7z",
+            "-aos",
+            "-bd",
+            "-bsp0",
+            "-bso0",
             "x",
             std::format("-o{}", std::string(dest)),
             std::string(file)
         };
     }
+    // sometimes authors use a compression utility that implements PK > 4.1, gnu unzip doesnt support this.
+    /*
     else if (type == "application/zip\n")
     {
         // unzip creates missing directories
         extractCmd = {
             "/usr/bin/unzip",
+            "-n",
+            "-q",
             "-d",
             dest,
             std::string(file)
         };
     }
+    */
     else if (type == "application/x-rar\n")
     {
         extractCmd = {
             "/usr/bin/unrar",
+            "-o-",
+            "-idq",
             "x",
             std::format("-op{}", std::string(dest)),
             std::string(file)
@@ -1057,51 +1071,60 @@ ProcessTask UnzipFile(std::filesystem::path const & file, std::filesystem::path 
 
 bool FindFomod(std::filesystem::path const & modPath, std::filesystem::path& out, std::filesystem::path & realRoot)
 {
-    std::filesystem::path fomod_dir;
-    bool foundFomod = false;
-    for (auto it = std::filesystem::recursive_directory_iterator(modPath); it != std::filesystem::recursive_directory_iterator(); ++it)
+    try
     {
-        std::string fn = it->path().filename();
-        if (strcasecmp(fn.c_str(), "fomod") == 0)
+        std::filesystem::path fomod_dir;
+        bool foundFomod = false;
+        for (auto it = std::filesystem::recursive_directory_iterator(modPath); it != std::filesystem::recursive_directory_iterator(); ++it)
         {
-            if (it->is_directory())
+            std::string fn = it->path().filename();
+            if (strcasecmp(fn.c_str(), "fomod") == 0)
             {
-                fomod_dir = it->path();
-                foundFomod = true;
-            }
-            break;
-        }
-    }
-
-    if (!foundFomod)
-    {
-        return false;
-    }
-
-    // find ModuleConfig.xml
-    bool foundFomodConf = false;
-    std::filesystem::path fomodMC;
-    if (foundFomod)
-    {
-        std::filesystem::directory_iterator dit(fomod_dir);
-        for (; dit != std::filesystem::directory_iterator(); ++dit)
-        {
-            std::string fn = dit->path().filename();
-            int m = strcasecmp(fn.c_str(), "ModuleConfig.xml");
-            if (m == 0)
-            {
-                fomodMC = dit->path();
-                foundFomodConf = true;
+                if (it->is_directory())
+                {
+                    fomod_dir = it->path();
+                    foundFomod = true;
+                }
                 break;
             }
         }
-    }
 
-    if (foundFomodConf && std::filesystem::is_regular_file(fomodMC))
+        if (!foundFomod)
+        {
+            return false;
+        }
+
+        // find ModuleConfig.xml
+        bool foundFomodConf = false;
+        std::filesystem::path fomodMC;
+        if (foundFomod)
+        {
+            std::filesystem::directory_iterator dit(fomod_dir);
+            for (; dit != std::filesystem::directory_iterator(); ++dit)
+            {
+                std::string fn = dit->path().filename();
+                int m = strcasecmp(fn.c_str(), "ModuleConfig.xml");
+                if (m == 0)
+                {
+                    fomodMC = dit->path();
+                    foundFomodConf = true;
+                    break;
+                }
+            }
+        }
+
+        if (foundFomodConf && std::filesystem::is_regular_file(fomodMC))
+        {
+            out = fomodMC;
+            realRoot = fomod_dir.parent_path();
+            return true;
+        }
+    }
+    catch (std::filesystem::filesystem_error const & er)
     {
-        out = fomodMC;
-        realRoot = fomod_dir.parent_path();
-        return true;
+        std::cout << er.what() << std::endl;
+        std::cout << er.path1() << std::endl;
+        std::cout << er.path2() << std::endl;
     }
     return false;
 }
@@ -1118,11 +1141,11 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, FomodAuto::Config
         return dlr.modId == modId && dlr.fileId == fileId;
     });
 
+    // already installed, skip
     if (dl == mgr.downloadSessions.end())
     {
         return;
     }
-    
     
     std::string fileStem = std::filesystem::path(dl->fileName).stem();
     std::filesystem::path staging = mgr.config.projectDir / ".mod_staging";
@@ -1219,18 +1242,9 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, FomodAuto::Config
             mod.enabled = true;
             mod.loadIndex = mgr->inst.mods.size() - 1;
             mod.modFile = fileStem;
-
-            // remove staging
-            std::vector<std::string> rmCmd = {
-                "/usr/bin/rm",
-                "-r",
-                staging,
-            };
-            if (!LaunchProc(rmCmd, "/"))
-            {
-                std::cout << "Failed to delete fomod tmp dir: " << staging << std::endl;
-            }
-            
+            mod.fileId = fileId;
+            mod.modId = modId;
+            mod.hName = dl->hName;
         }
         else
         {
@@ -1239,10 +1253,22 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, FomodAuto::Config
             mod.enabled = true;
             mod.loadIndex = mgr->inst.mods.size() - 1;
             mod.modFile = fileStem;
+            mod.fileId = fileId;
+            mod.modId = modId;
+            mod.hName = dl->hName;
             
             MoveDirNormalizePaths(staging / fileStem, installDest);
+        }
 
-            mgr->cookingInstall.reset();
+        // remove staging
+        std::vector<std::string> rmCmd = {
+            "/usr/bin/rm",
+            "-r",
+            staging / fileStem,
+        };
+        if (!LaunchProc(rmCmd, "/"))
+        {
+            std::cout << "Failed to delete mod staging dir: " << staging << std::endl;
         }
 
         mgr->cookingInstall.reset();
@@ -1271,6 +1297,18 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
     if (dl == mgr.downloadSessions.end())
     {
         return;
+    }
+
+    {
+        auto im = std::find_if(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const & m){
+            return m.fileId == dl->fileId && m.modId == dl->modId;
+        });
+
+        if (im != mgr.inst.mods.end())
+        {
+            std::cout << "Mod already installed: " << modName << std::endl;
+            return;
+        }
     }
 
     // check filetype
@@ -1356,7 +1394,10 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
 
     if (isFomod)
     {
-        InitFomod(mgr, staging / fileStem, realModRoot, fomodPath, installDest, fileStem);
+        ModFileRef fileRef;
+        fileRef.modId = dl->modId;
+        fileRef.fileId = dl->fileId;
+        InitFomod(mgr, staging / fileStem, realModRoot, fomodPath, installDest, fileRef);
     }
     else
     {
@@ -1366,6 +1407,9 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
             mod.enabled = true;
             mod.loadIndex = mgr.inst.mods.size() - 1;
             mod.modFile = fileStem;
+            mod.fileId = dl->fileId;
+            mod.modId = dl->modId;
+            mod.hName = dl->hName;
 
             // remove staging
             std::vector<std::string> rmCmd = {
@@ -1405,6 +1449,7 @@ void InitMgr(ModMgr& mgr)
     curl_global_init(CURL_GLOBAL_ALL);
 
     mgr.curlEngine = std::make_shared<AsyncTaskProcessor<CurlAsyncEngine>>();
+    mgr.processEngine = std::make_shared<AsyncTaskProcessor<AsyncProcessEngine>>();
 }
 
 void CleanupMgr(ModMgr& mgr)
@@ -1413,6 +1458,12 @@ void CleanupMgr(ModMgr& mgr)
     {
         task.task.Stop();
     }
+
+    if (mgr.cookingInstall)
+    {
+        mgr.cookingInstall->Stop();
+    }
+    mgr.cookingInstall.reset();
 
     mgr.downloadSessions.clear();
 

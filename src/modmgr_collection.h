@@ -46,10 +46,13 @@ struct NxmCollection
     // how good each step's implementation is.
     bool error = false;
     CollectionInfo info;
+    std::vector<std::string> installErrorInfo;
 
     CollectionStatus status = CollectionStatus::None;
     nlohmann::json bundleDefinition;
 
+
+    std::string installingCurrentMod;
     int installIndex = -1;
     
 
@@ -60,7 +63,7 @@ void StartNXMCollectionInstall(ModMgr& mgr, NxmCollectionUrl const & url);
 void GetCollectionBundleLink(ModMgr& mgr);
 void DownloadCollectionBundle(ModMgr& mgr);
 void DownloadCollectionMods(ModMgr& mgr);
-void InstallCollectionMods(ModMgr& mgr);
+void UpdateInstallCollectionMods(ModMgr& mgr);
 
 
 
