@@ -63,6 +63,14 @@ namespace nlohmann
         
         static void from_json(json const & j, ModDownload & cfg);
     };
+
+    template <>
+    struct adl_serializer<NxmCollectionUrl>
+    {
+        static void to_json(json& j, NxmCollectionUrl const & cfg);
+        
+        static void from_json(json const & j, NxmCollectionUrl & cfg);
+    };
 }
 
 

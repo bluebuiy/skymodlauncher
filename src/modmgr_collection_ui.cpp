@@ -5,6 +5,9 @@
 
 #include "imgui.h"
 
+#include <iostream>
+#include <format>
+
 
 void RenderCollectionWindow(ModMgr& mgr)
 {
@@ -13,6 +16,8 @@ void RenderCollectionWindow(ModMgr& mgr)
         return;
     }
 
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(500, 300), ImGuiCond_Appearing);
     if (ImGui::Begin("Collection"))
     {
         ImGui::Text("%s", mgr.collection.info.name.c_str());
@@ -47,7 +52,18 @@ void RenderCollectionWindow(ModMgr& mgr)
 
             if (doInstall)
             {
-                GetCollectionBundleLink(mgr);
+                mgr.inst.collection = mgr.collection.url;
+                bool foundBundle = false;
+                std::filesystem::path collectionData(mgr.config.projectDir / ".mod_staging" / std::format("{}-{}", mgr.collection.url.slug, mgr.collection.url.rev) / "collection.json");
+                if (std::filesystem::is_regular_file(collectionData))
+                {
+                    std::cout << "Found collection bundle, skipping download" << std::endl;
+                    DownloadCollectionMods(mgr);
+                }
+                else
+                {
+                    GetCollectionBundleLink(mgr);
+                }
             }
         }
         else if (mgr.collection.status == CollectionStatus::FetchingBundleLink)
@@ -149,6 +165,8 @@ void RenderCollectionWindow(ModMgr& mgr)
             {
                 ApplyCollectionLoadOrder(mgr);
             }
+            ImGui::TextWrapped("Check output log for potential issues.  Improperly packaged mods, or mods set to the wrong install type, may not be installed correctly.  This program does not attempt to guess how a mod should be installed. FOMOD mods should be fine.");
+            ImGui::TextWrapped("SKSE will never install correctly due to how it is packaged, and must be manually installed into a mod.");
         }
         
 

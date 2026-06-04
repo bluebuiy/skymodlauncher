@@ -173,8 +173,11 @@ void StartNXMCollectionInstall(ModMgr &mgr, NxmCollectionUrl const &url)
     {
         return;
     }
-    mgr.collection.status = CollectionStatus::FetchingInfo;
+
+    std::cout << "Fetching collection data: " << url.game << "-" << url.slug << "-" << url.rev << std::endl;
+
     mgr.collection.url = url;
+    mgr.collection.status = CollectionStatus::FetchingInfo;
 
     ColInfoDlFinished f;
     f.mgr = &mgr;

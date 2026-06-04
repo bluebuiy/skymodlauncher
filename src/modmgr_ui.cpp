@@ -477,6 +477,11 @@ void RenderModMgr(ModMgr& mgr)
         {
             mgr.settingsOpen = true;
         }
+
+        if (ImGui::Button("Collection"))
+        {
+            mgr.openCollectionInput = true;
+        }
 /*
         if (ImGui::Button("Reset layout"))
         {
@@ -630,6 +635,35 @@ void RenderModMgr(ModMgr& mgr)
     if (mgr.settingsOpen)
     {
         RenderModMgrSettings(mgr);
+    }
+
+    if (mgr.openCollectionInput)
+    {
+        mgr.openCollectionInput = false;
+        mgr.inputCollection = mgr.inst.collection;
+        ImGui::OpenPopup("Input Collection");
+    }
+    bool open = true;
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(500, 300), ImGuiCond_Appearing);
+    if (ImGui::BeginPopupModal("Input Collection", &open))
+    {
+        if (!open)
+        {
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::InputText("Slug", &mgr.inputCollection.slug);
+        ImGui::InputInt("Revision", &mgr.inputCollection.rev, 0, 0);
+        ImGui::InputText("Game", &mgr.inputCollection.game);
+
+        if (ImGui::Button("Load Collection"))
+        {
+            ImGui::CloseCurrentPopup();
+            StartNXMCollectionInstall(mgr, mgr.inputCollection);
+        }
+
+        ImGui::EndPopup();
     }
 }
 

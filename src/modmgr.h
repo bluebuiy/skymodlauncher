@@ -110,6 +110,7 @@ struct ModMgrInst
     std::vector<ModPlugin> pluginList;
     std::vector<CustomVariable> customVariables;
     std::vector<ModDownload> downloads;
+    NxmCollectionUrl collection;
 };
 
 enum class ModDlState
@@ -175,6 +176,9 @@ struct ModMgr
     bool settingsOpen = false;
     bool foundSkyrimExe = false;
     bool foundSkyrimIni = false;
+    bool openCollectionInput = false;
+
+    NxmCollectionUrl inputCollection;
 
     std::optional<FomodUI> fomodState;
     std::optional<ProcessTask> cookingInstall;

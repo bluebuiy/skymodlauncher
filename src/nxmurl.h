@@ -20,5 +20,8 @@ struct NxmCollectionUrl
     int rev = -1;
 };
 
-
+inline bool operator==(NxmCollectionUrl const & a, NxmCollectionUrl const & b)
+{
+    return a.game == b.game && a.slug == b.slug && a.rev == b.rev;
+}
 

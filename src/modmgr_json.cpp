@@ -63,6 +63,7 @@ namespace nlohmann
         JPUT(j, mi, pluginList);
         JPUT(j, mi, customVariables);
         JPUT(j, mi, downloads);
+        JPUT(j, mi, collection);
     }
 
     void adl_serializer<ModMgrInst>::from_json(json const & j, ModMgrInst& mi)
@@ -73,6 +74,7 @@ namespace nlohmann
         JPULL(j, mi, pluginList);
         JPULL(j, mi, customVariables);
         JPULL(j, mi, downloads);
+        JPULL(j, mi, collection);
     }
     
     void adl_serializer<ModExec>::to_json(json& j, ModExec const & me)
@@ -133,6 +135,20 @@ namespace nlohmann
         JPULL(j, md, game);
         JPULL(j, md, installType);
         JPULL(j, md, hFileName);
+    }
+
+    void adl_serializer<NxmCollectionUrl>::to_json(json& j, NxmCollectionUrl const & cv)
+    {
+        JPUT(j, cv, game);
+        JPUT(j, cv, rev);
+        JPUT(j, cv, slug);
+    }
+
+    void adl_serializer<NxmCollectionUrl>::from_json(json const & j, NxmCollectionUrl& cv)
+    {
+        JPULL(j, cv, game);
+        JPULL(j, cv, rev);
+        JPULL(j, cv, slug);
     }
 }
 
