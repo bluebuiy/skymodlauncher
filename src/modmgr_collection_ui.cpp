@@ -15,6 +15,7 @@ void RenderCollectionWindow(ModMgr& mgr)
 
     if (ImGui::Begin("Collection"))
     {
+        ImGui::Text("%s", mgr.collection.info.name.c_str());
         if (ImGui::Button("Cancel"))
         {
             mgr.collection = {};
@@ -136,6 +137,14 @@ void RenderCollectionWindow(ModMgr& mgr)
                 ImGui::Text("%s", mgr.collection.installingCurrentMod.c_str());
                 UpdateInstallCollectionMods(mgr);
             }
+        }
+        else if (mgr.collection.status == CollectionStatus::ConfigureLoadOrder)
+        {
+            ApplyCollectionLoadOrder(mgr);
+        }
+        else if (mgr.collection.status == CollectionStatus::Installed)
+        {
+            ImGui::Text("Done");
         }
         
 

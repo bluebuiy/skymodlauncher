@@ -26,6 +26,9 @@ FetchContent_MakeAvailable(glfw pugixml)
 
 add_executable(skymodlaunch)
 
+set_property(TARGET skymodlaunch PROPERTY CXX_STANDARD 20)
+set_property(TARGET skymodlaunch PROPERTY CXX_STANDARD_REQUIRED ON)
+
 target_include_directories(skymodlaunch
     PRIVATE
         external/
@@ -53,6 +56,11 @@ target_sources(skymodlaunch
         external/imgui/imgui_stdlib.cpp
 
         external/nlohmann/json.hpp
+
+        external/intrusive/nest_mem.h
+        external/intrusive/llist.h
+        external/intrusive/dg.h
+        external/intrusive/heap.h
 
         src/imgui.h
         src/filewrapper.h

@@ -93,7 +93,7 @@ void RenderFomod(ModMgr& mgr)
         {
             doStage = true;
         }
-        ImGui::Text("%s", fomod.hName);
+        ImGui::Text("%s", fomod.hName.c_str());
     }
     else if (fomod.stage == FomodStage::Steps)
     {

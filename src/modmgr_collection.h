@@ -64,7 +64,7 @@ void GetCollectionBundleLink(ModMgr& mgr);
 void DownloadCollectionBundle(ModMgr& mgr);
 void DownloadCollectionMods(ModMgr& mgr);
 void UpdateInstallCollectionMods(ModMgr& mgr);
-
+void ApplyCollectionLoadOrder(ModMgr& mgr);
 
 
 

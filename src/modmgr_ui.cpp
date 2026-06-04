@@ -573,7 +573,7 @@ void RenderModMgr(ModMgr& mgr)
                 }
                 
                 ImGui::SameLine();
-                ImGui::Text("%-32s", mgr.inst.mods[i].modFile.c_str());
+                ImGui::Text("%-32s", mgr.inst.mods[i].hName.c_str());
             ImGui::PopID();
         }
         ImGui::Separator();
