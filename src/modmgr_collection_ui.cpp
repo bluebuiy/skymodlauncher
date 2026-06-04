@@ -145,6 +145,10 @@ void RenderCollectionWindow(ModMgr& mgr)
         else if (mgr.collection.status == CollectionStatus::Installed)
         {
             ImGui::Text("Done");
+            if (ImGui::Button("Reapply Load Order"))
+            {
+                ApplyCollectionLoadOrder(mgr);
+            }
         }
         
 

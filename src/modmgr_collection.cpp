@@ -548,9 +548,13 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
         {
             std::cout << "Failed to sort plugin: " << pluginName << std::endl;
         }
-        else if (fi != p)
+        else
         {
-            std::swap(mgr.inst.pluginList[p], mgr.inst.pluginList[fi]);
+            if (fi != p)
+            {
+                std::swap(mgr.inst.pluginList[p], mgr.inst.pluginList[fi]);
+            }
+            ++p;
         }
     }
     
