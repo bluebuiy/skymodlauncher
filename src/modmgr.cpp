@@ -3,6 +3,7 @@
 #include "fomod_ui.h"
 #include "nxmurl.h"
 #include "asyncproc.h"
+#include "quickdigest5/quickdigest5.hpp"
 
 #include <fstream>
 #include <iostream>
@@ -61,32 +62,41 @@ void LaunchExec(ModMgr& mgr, std::string const & execName)
     ForkInvoke(&ex);
 }
 
-// TODO search overwrite too
-void DiscoverPlugins(ModMgr& mgr)
+void __attribute__((optimize("O0"))) DiscoverPlugins(ModMgr& mgr)
 {
     // plugins are always in ./Data/
 
     std::unordered_set<std::string> plugins;
 
     std::filesystem::path modsRoot(mgr.config.modFolder);
+    std::vector<std::filesystem::path> searchPaths;
+    searchPaths.emplace_back(mgr.config.projectDir / "overwrite");
     for (auto&& modDir : mgr.inst.mods)
     {
         if (modDir.enabled)
         {
-            auto dataDir = modsRoot / modDir.modFile / "Data";
-
-            if (std::filesystem::is_directory(dataDir))
+            auto p = modsRoot / modDir.modFile / "Data";
+            if (std::filesystem::is_directory(p))
             {
-                for (std::filesystem::directory_iterator iter(dataDir); iter != std::filesystem::directory_iterator(); ++iter)
+                searchPaths.emplace_back(modsRoot / modDir.modFile / "Data");
+            }
+        }
+    }
+
+    for (auto&& dataDir : searchPaths)
+    {
+        // kinda redundant but it checks that overwrite exists
+        if (std::filesystem::is_directory(dataDir))
+        {
+            for (std::filesystem::directory_iterator iter(dataDir); iter != std::filesystem::directory_iterator(); ++iter)
+            {
+                if (!iter->is_directory())
                 {
-                    if (!iter->is_directory())
+                    auto path = iter->path();
+                    auto ext = path.filename().extension();
+                    if (ext == ".esp" || ext == ".esm" || ext == ".esl")
                     {
-                        auto path = iter->path();
-                        auto ext = path.filename().extension();
-                        if (ext == ".esp" || ext == ".esm" || ext == ".esl")
-                        {
-                            plugins.insert(path.filename());
-                        }
+                        plugins.insert(path.filename());
                     }
                 }
             }
@@ -1129,7 +1139,117 @@ bool FindFomod(std::filesystem::path const & modPath, std::filesystem::path& out
     return false;
 }
 
-void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, FomodAuto::Config const & conf)
+ModInstallType GuessInstallType(std::filesystem::path modContents, std::filesystem::path & outRoot)
+{
+    std::optional<std::filesystem::path> dataPath;
+    int dc = 0;
+    std::optional<std::filesystem::path> dataContPath;
+    int dcc = 0;
+
+    for (std::filesystem::recursive_directory_iterator di(modContents); di != std::filesystem::recursive_directory_iterator(); ++di)
+    {
+        if (di->is_directory())
+        {
+            std::string name = di->path().filename();
+            if (0 == strcasecmp(name.c_str(), "Data"))
+            {
+                dataPath = di->path().parent_path();
+                ++dc;
+            }
+            else if (
+                0 == strcasecmp(name.c_str(), "meshes") ||
+                0 == strcasecmp(name.c_str(), "textures") ||
+                0 == strcasecmp(name.c_str(), "skse") ||
+                0 == strcasecmp(name.c_str(), "interface")
+            )
+            {
+                auto np = di->path().parent_path();
+                if (dataContPath.has_value())
+                {
+                    if (np != *dataContPath)
+                    {
+                        ++dcc;
+                    }
+                }
+                else
+                {
+                    ++dcc;
+                }
+                dataContPath = np;
+            }
+            else if (0 == strcasecmp(name.c_str(), "scripts"))
+            {
+                if (0 != strcasecmp(di->path().parent_path().filename().c_str(), "source"))
+                {
+                    // not very elegant but im not gonna mess with it
+                    auto np = di->path().parent_path();
+                    if (dataContPath.has_value())
+                    {
+                        if (np != *dataContPath)
+                        {
+                            ++dcc;
+                        }
+                    }
+                    else
+                    {
+                        ++dcc;
+                    }
+                    dataContPath = np;
+                }
+            }
+        }
+    }
+    if (dc > 1 || dcc > 1)
+    {
+        return ModInstallType::Conflicting;
+    }
+    if (dc == 1 && dcc == 1)
+    {
+        if (*dataPath == dataContPath->parent_path())
+        {
+            outRoot = *dataPath;
+            return ModInstallType::Root;
+        }
+        else
+        {
+            return ModInstallType::Conflicting;
+        }
+    }
+    if (dc == 1 && dcc == 0)
+    {
+        outRoot = *dataPath;
+        return ModInstallType::Root;
+    }
+    if (dc == 0 && dcc == 1)
+    {
+        outRoot = *dataContPath;
+        return ModInstallType::Data;
+    }
+    return ModInstallType::Undetermined;
+}
+
+std::string InstallTypeStr(ModInstallType t)
+{
+    if (t == ModInstallType::Data)
+    {
+        return "Data";
+    }
+    if (t == ModInstallType::Root)
+    {
+        return "Root";
+    }
+    if (t == ModInstallType::Conflicting)
+    {
+        return "CONFLICTING!";
+    }
+    if (t == ModInstallType::Undetermined)
+    {
+        return "Undetermined!";
+    }
+    return "Unknown!";
+}
+
+void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<FomodAuto::Config> const & confFomod, std::optional<ManualInstallConfig> const & confManual)
 {
     if (mgr.cookingInstall.has_value())
     {
@@ -1151,7 +1271,7 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, FomodAuto::Config
     std::filesystem::path staging = mgr.config.projectDir / ".mod_staging";
     std::filesystem::path inFile = mgr.config.projectDir / "download" / dl->fileName;
 
-    auto task = UnzipFile(inFile, staging / fileStem, [mgr = &mgr, staging, fileStem, confCap = conf, fileId, modId](bool succeeded) {
+    auto task = UnzipFile(inFile, staging / fileStem, [mgr = &mgr, staging, fileStem, confCapFomod = confFomod, confCapManual = confManual, fileId, modId](bool succeeded) {
         if (!succeeded)
         {
             mgr->cookingInstall.reset();
@@ -1167,21 +1287,79 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, FomodAuto::Config
             return dlr.modId == modId && dlr.fileId == fileId;
         });
 
-        if (dl->installType == ModInstallType::Data)
-        {
-            installDest /= "Data";
-        }
-        else if (dl->installType == ModInstallType::Root)
-        {
-            ; // noop
-        }
-
         std::filesystem::path fomodPath;
         std::filesystem::path realModRoot;
-        bool isFomod = FindFomod(staging / fileStem, fomodPath, realModRoot);
+        bool isFomod = confCapFomod.has_value() && FindFomod(staging / fileStem, fomodPath, realModRoot);
 
-        if (isFomod)
+        if (confCapManual.has_value())
         {
+            // To whever thought using a file hash to identify which files to use was a good idea......
+
+            std::unordered_map<std::string, std::filesystem::path> hashedFiles;
+            for (auto dit = std::filesystem::recursive_directory_iterator(staging / fileStem); dit != std::filesystem::recursive_directory_iterator(); ++dit)
+            {
+                if (dit->is_regular_file())
+                {
+                    std::ifstream fileStream(dit->path());
+                    if (!fileStream)
+                    {
+                        std::cout << "Failed to open for hashing: " << dit->path() << std::endl;
+                    }
+                    auto hash = QuickDigest5::digestFile(fileStream);
+                    hashedFiles.emplace(hash.to_string(), dit->path());
+                }
+            }
+
+            fomod::InstallActions install;
+
+            for (auto&& fileSpec : confCapManual->paths)
+            {
+                auto it = hashedFiles.find(fileSpec.md5);
+                if (it == hashedFiles.end())
+                {
+                    std::cout << "Failed to find file with md5 " << fileSpec.md5 << std::endl;
+                }
+                else
+                {
+                    auto& action = install.actions.emplace_back();
+                    action.action = fomod::FileAction::FileToFile;
+                    action.from = it->second;
+                    action.to = fileSpec.path;
+                    fomod::convert_path(action.to);
+                }
+            }
+
+            if (dl->installType == ModInstallType::Data)
+            {
+                installDest /= "Data";
+            }
+            else if (dl->installType == ModInstallType::Root)
+            {
+                ; // noop
+            }
+
+            if (ApplyFomodFileActions(*mgr, install, staging / fileStem, installDest))
+            {
+                auto& mod = mgr->inst.mods.emplace_back();
+                mod.enabled = true;
+                mod.loadIndex = mgr->inst.mods.size() - 1;
+                mod.modFile = fileStem;
+                mod.fileId = fileId;
+                mod.modId = modId;
+                mod.hName = dl->hName;
+            }
+        }
+        else if (isFomod)
+        {
+            if (dl->installType == ModInstallType::Data)
+            {
+                installDest /= "Data";
+            }
+            else if (dl->installType == ModInstallType::Root)
+            {
+                ; // noop
+            }
+
             auto fmopt = fomod::Load(fomodPath);
             if (!fmopt)
             {
@@ -1189,7 +1367,7 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, FomodAuto::Config
                 return;
             }
 
-            FomodAuto::Config conf = confCap;
+            FomodAuto::Config conf = *confCapFomod;
             fomod::Eval eval;
 
             while (true)
@@ -1199,7 +1377,24 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, FomodAuto::Config
                 bool visible = fomod::EvalSubstep(*fmopt, eval, ss);
                 if (visible)
                 {
-                    auto* step = conf.GetStep(ss.stepName);
+                    FomodAuto::Step* step = nullptr;
+                    if (ss.stepName.empty())
+                    {
+                        if (eval.currentStep < conf.steps.size())
+                        {
+                            step = &conf.steps[eval.currentStep];
+                        }
+                        else
+                        {
+                            std::cout << "Invalid fomod preset!" << std::endl;
+                            mgr->cookingInstall.reset();
+                            return;
+                        }
+                    }
+                    else
+                    {
+                        step = conf.GetStep(ss.stepName);
+                    }
                     if (step)
                     {
                         auto* group = step->GetGroup(ss.name);
@@ -1235,19 +1430,74 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, FomodAuto::Config
             auto actions = fomod::GetInstallActions(*fmopt, eval, ss);
 
             // perform file actions
-            ApplyFomodFileActions(*mgr, actions, realModRoot, installDest);
-
-            // create mod entry
-            auto& mod = mgr->inst.mods.emplace_back();
-            mod.enabled = true;
-            mod.loadIndex = mgr->inst.mods.size() - 1;
-            mod.modFile = fileStem;
-            mod.fileId = fileId;
-            mod.modId = modId;
-            mod.hName = dl->hName;
+            if (ApplyFomodFileActions(*mgr, actions, realModRoot, installDest))
+            {
+                // create mod entry
+                auto& mod = mgr->inst.mods.emplace_back();
+                mod.enabled = true;
+                mod.loadIndex = mgr->inst.mods.size() - 1;
+                mod.modFile = fileStem;
+                mod.fileId = fileId;
+                mod.modId = modId;
+                mod.hName = dl->hName;
+            }
         }
         else
         {
+            ModInstallType instType = dl->installType;
+            std::filesystem::path guessedModRoot;
+            std::filesystem::path modRoot = staging / fileStem;
+
+            std::string rootname = modRoot.filename();
+            for (std::filesystem::directory_iterator di(modRoot); di != std::filesystem::directory_iterator(); ++di)
+            {
+                if (rootname.starts_with(di->path().filename().c_str()))
+                {
+                    modRoot = di->path();
+                    break;
+                }
+            }
+
+            auto guessedInstallType = GuessInstallType(modRoot, guessedModRoot);
+            if (guessedInstallType == ModInstallType::Undetermined)
+            {
+                if (mgr->verbose)
+                {
+                    std::cout << "Unble to guess install type for " << dl->fileName << " falling back to type specified in collection: " << InstallTypeStr(dl->installType) << std::endl;
+                }
+            }
+            else if (guessedInstallType == ModInstallType::Conflicting)
+            {
+                std::cout << "!!!!!!!! Mod " << dl->fileName << " may be packaged incorrectly, may be installed wring!  Intalling as " << InstallTypeStr(dl->installType) << std::endl;
+            }
+            else if (guessedInstallType != dl->installType)
+            {
+                if (mgr->verbose)
+                {
+                    std::cout << "!!!!!!!! Mod's install type is " << InstallTypeStr(dl->installType) << " but looks like " << InstallTypeStr(guessedInstallType) << ", using guessed type instead" << std::endl;
+                    std::cout << "!!!!!!!! Using " << guessedModRoot << " as the true mod root" << std::endl;
+                }
+                instType = guessedInstallType;
+                modRoot = guessedModRoot;
+            }
+            else if (guessedModRoot != modRoot)
+            {
+                if (mgr->verbose)
+                {
+                    std::cout << "!!!!!!!! Guessed mod root is different than default for mod " << dl->fileName << " at " << guessedModRoot << " with type " << InstallTypeStr(instType) << std::endl;
+                }
+                modRoot = guessedModRoot;
+            }
+            
+            if (instType == ModInstallType::Data)
+            {
+                installDest /= "Data";
+            }
+            else if (instType == ModInstallType::Root)
+            {
+                ; // noop
+            }
+
             // otherwise create the mod entry and move mod into it
             auto& mod = mgr->inst.mods.emplace_back();
             mod.enabled = true;
@@ -1257,12 +1507,13 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, FomodAuto::Config
             mod.modId = modId;
             mod.hName = dl->hName;
             
-            MoveDirNormalizePaths(staging / fileStem, installDest);
+            MoveDirNormalizePaths(modRoot, installDest);
         }
 
         // remove staging
         std::vector<std::string> rmCmd = {
             "/usr/bin/rm",
+            "-f",
             "-r",
             staging / fileStem,
         };
@@ -1438,6 +1689,7 @@ void DeleteMod(ModMgr& mgr, std::string & modFile)
     
     std::vector<std::string> args = {
         "/usr/bin/rm",
+        "-f",
         "-r",
         path
     };

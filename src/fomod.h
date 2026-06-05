@@ -320,6 +320,9 @@ namespace fomod
         std::vector<FileInstallAction> actions;
     };
 
+
+    void convert_path(std::string & path);
+
     std::optional<Fomod> Load(std::filesystem::path const & path);
 
     // retrives files that need to be queried by the mod manager

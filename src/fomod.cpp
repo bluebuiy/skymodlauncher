@@ -242,8 +242,11 @@ Order loadOrder(pugi::xml_node const & value)
     {
         return Order::Descending;
     }
-    std::cout << "Unknown order " << order << std::endl;
-    return Order::Explicit;
+    else if (order != "")
+    {
+        std::cout << "Unknown order " << order << std::endl;
+    }
+    return Order::Ascending;
 }
 
 SelectionType loadSelectionType(pugi::xml_node const & value)

@@ -57,6 +57,9 @@ target_sources(skymodlaunch
 
         external/nlohmann/json.hpp
 
+        external/quickdigest5/quickdigest5.hpp
+        external/quickdigest5/quickdigest5.cpp
+
         external/intrusive/nest_mem.h
         external/intrusive/llist.h
         external/intrusive/dg.h

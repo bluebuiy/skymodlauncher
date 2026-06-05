@@ -9,6 +9,7 @@
 #include <format>
 #include <iostream>
 #include <fstream>
+#include <unordered_map>
 
 struct ColInfoDlFinished
 {
@@ -383,15 +384,17 @@ void UpdateInstallCollectionMods(ModMgr &mgr)
     mgr.collection.installingCurrentMod = modInfo["name"].get<std::string>();
     std::cout << "Intalling mod: " << mgr.collection.installingCurrentMod << std::endl;
 
-    FomodAuto::Config fomodConfig;
+    std::optional<ManualInstallConfig> manualConfig;
+    std::optional<FomodAuto::Config> fomodConfig;
     bool confGood = true;
     if (modInfo.contains("choices"))
     {
+        fomodConfig = FomodAuto::Config();
         try
         {
             for (auto &&step : modInfo["choices"]["options"])
             {
-                auto &stepData = fomodConfig.steps.emplace_back();
+                auto &stepData = fomodConfig->steps.emplace_back();
                 stepData.name = step["name"].get<std::string>();
                 for (auto &&group : step["groups"])
                 {
@@ -412,10 +415,21 @@ void UpdateInstallCollectionMods(ModMgr &mgr)
             mgr.collection.installErrorInfo.emplace_back(modInfo["name"].get<std::string>());
         }
     }
+    else if (modInfo.contains("hashes"))
+    {
+        manualConfig = ManualInstallConfig();
+        for (auto&& item : modInfo["hashes"])
+        {
+            auto& m = manualConfig->paths.emplace_back();
+            m.md5 = item["md5"].get<std::string>();
+            m.path = item["path"].get<std::string>();
+        }
+    }
+
 
     if (confGood)
     {
-        InstallDownloadedFile(mgr, fileId, modId, fomodConfig);
+        InstallDownloadedFile(mgr, fileId, modId, fomodConfig, manualConfig);
     }
     else
     {
@@ -430,103 +444,141 @@ struct ModDepNode
     std::string name;
 };
 
+struct PluginDepNode
+{
+    std::string group;
+    std::string pluginName;
+    intrusive::dg_inject<PluginDepNode> dg;
+};
+
 void ApplyCollectionLoadOrder(ModMgr &mgr)
 {
-    std::vector<ModDepNode> nodes;
-    intrusive::directed_graph<ModDepNode, &ModDepNode::dg> dg;
-    std::vector<std::unique_ptr<intrusive::dg_edge<ModDepNode>>> edges;
-
-    for (auto &&mod : mgr.inst.mods)
+    // mod order
     {
-        ModDepNode &dn = nodes.emplace_back();
-        dn.name = mod.modFile;
-        dn.mod.fileId = mod.fileId;
-        dn.mod.modId = mod.modId;
-    }
+        std::vector<ModDepNode> nodes;
+        intrusive::directed_graph<ModDepNode, &ModDepNode::dg> dg;
+        std::vector<std::unique_ptr<intrusive::dg_edge<ModDepNode>>> edges;
 
-    for (auto&& node : nodes)
-    {
-        dg.add(&node);
-    }
+        for (auto &&mod : mgr.inst.mods)
+        {
+            ModDepNode &dn = nodes.emplace_back();
+            dn.name = mod.modFile;
+            dn.mod.fileId = mod.fileId;
+            dn.mod.modId = mod.modId;
+        }
 
-    for (auto &&rule : mgr.collection.bundleDefinition["modRules"])
-    {
-        std::string type = rule["type"];
-        if (type == "conflicts")
+        for (auto&& node : nodes)
         {
-            std::cout << "Ignoring 'conflicts' load rule" << std::endl;
-            continue;
+            dg.add(&node);
         }
-        else if (type != "before" && type != "after")
-        {
-            std::cout << "Unknown load rule: " << type << std::endl;
-            continue;
-        }
-        std::string srcFile = rule["source"]["fileExpression"].get<std::string>();
-        std::string refFile = rule["reference"]["fileExpression"].get<std::string>();
-        auto refIt = std::find_if(nodes.begin(), nodes.end(), [&](ModDepNode const & n) {
-            return n.name == refFile;
-        });
-        auto srcIt = std::find_if(nodes.begin(), nodes.end(), [&](ModDepNode const & n) {
-            return n.name == srcFile;
-        });
-        if (refIt == nodes.end())
-        {
-            std::cout << "Failed to find mod for load rule: " << refFile << std::endl;
-            continue;
-        }
-        if (srcIt == nodes.end())
-        {
-            std::cout << "Failed to find mod for load rule: " << srcFile << std::endl;
-            continue;
-        }
-        
-        if (type == "after")
-        {
-            auto edge = std::make_unique<intrusive::dg_edge<ModDepNode>>();
-            edge->from = &*refIt;
-            edge->to = &*srcIt;
-            dg.addEdge(edge.get());
-            edges.emplace_back(std::move(edge));
-        }
-        else if (type == "before")
-        {
-            auto edge = std::make_unique<intrusive::dg_edge<ModDepNode>>();
-            edge->from = &*srcIt;
-            edge->to = &*refIt;
-            dg.addEdge(edge.get());
-            edges.emplace_back(std::move(edge));
-        }
-    }
 
-    decltype(dg)::node_list list;
-    bool r = dg.topo_sort(list);
-
-    if (!r)
-    {
-        std::cout << "Failed to sort load order" << std::endl;
-        mgr.collection.error = true;
-        return;
-    }
-    else
-    {
-        int i = 0;
-        ModDepNode* n = list.head;
-        while (n)
+        for (auto &&rule : mgr.collection.bundleDefinition["modRules"])
         {
-            auto mit = std::find_if(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const & mi) {
-                return mi.modFile == n->name;
+            std::string type = rule["type"];
+            if (type == "conflicts")
+            {
+                std::cout << "Ignoring 'conflicts' load rule for: " << std::endl;
+                if (rule["reference"].contains("logicalFileName"))
+                {
+                    std::cout << "    " << rule["reference"]["logicalFileName"].get<std::string>();
+                }
+                else if (rule["reference"].contains("fileExpression"))
+                {
+                    std::cout << "    " << rule["reference"]["fileExpression"].get<std::string>();
+                }
+                if (rule["reference"].contains("versionMatch"))
+                {
+                    std::cout << "    " << rule["reference"]["versionMatch"].get<std::string>();
+                }
+                std::cout << std::endl;
+
+                if (rule["source"].contains("logicalFileName"))
+                {
+                    std::cout << "    " << rule["source"]["logicalFileName"].get<std::string>();
+                }
+                else if (rule["source"].contains("fileExpression"))
+                {
+                    std::cout << "    " << rule["source"]["fileExpression"].get<std::string>();
+                }
+                if (rule["source"].contains("versionMatch"))
+                {
+                    std::cout << "    " << rule["source"]["versionMatch"].get<std::string>();
+                }
+
+                std::cout << std::endl;
+                continue;
+            }
+            else if (type != "before" && type != "after")
+            {
+                std::cout << "Unknown load rule: " << type << std::endl;
+                continue;
+            }
+            std::string srcFile = rule["source"]["fileExpression"].get<std::string>();
+            std::string refFile = rule["reference"]["fileExpression"].get<std::string>();
+            auto refIt = std::find_if(nodes.begin(), nodes.end(), [&](ModDepNode const & n) {
+                return n.name == refFile;
             });
-            if (mit != mgr.inst.mods.end())
+            auto srcIt = std::find_if(nodes.begin(), nodes.end(), [&](ModDepNode const & n) {
+                return n.name == srcFile;
+            });
+            if (refIt == nodes.end())
             {
-                mit->loadIndex = i;
+                std::cout << "Failed to find mod for load rule: " << refFile << std::endl;
+                continue;
             }
-            else
+            if (srcIt == nodes.end())
             {
-                std::cout << "Failed to set load index " << i << " for " << n->name;
+                std::cout << "Failed to find mod for load rule: " << srcFile << std::endl;
+                continue;
             }
-            ++i;
-            n = list.resolve(n)->right;
+            
+            if (type == "after")
+            {
+                auto edge = std::make_unique<intrusive::dg_edge<ModDepNode>>();
+                edge->from = &*refIt;
+                edge->to = &*srcIt;
+                dg.addEdge(edge.get());
+                edges.emplace_back(std::move(edge));
+            }
+            else if (type == "before")
+            {
+                auto edge = std::make_unique<intrusive::dg_edge<ModDepNode>>();
+                edge->from = &*srcIt;
+                edge->to = &*refIt;
+                dg.addEdge(edge.get());
+                edges.emplace_back(std::move(edge));
+            }
+        }
+
+        decltype(dg)::node_list list;
+        bool r = dg.topo_sort(list);
+
+        if (!r)
+        {
+            std::cout << "Failed to sort load order" << std::endl;
+            mgr.collection.error = true;
+            return;
+        }
+        else
+        {
+            int i = 0;
+            ModDepNode* n = list.head;
+            while (n)
+            {
+                auto mit = std::find_if(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const & mi) {
+                    return mi.modFile == n->name;
+                });
+                if (mit != mgr.inst.mods.end())
+                {
+                    mit->loadIndex = i;
+                }
+                else
+                {
+                    std::cout << "Failed to set load index " << i << " for " << n->name;
+                }
+                ++i;
+                n = list.resolve(n)->right;
+            }
         }
     }
 
@@ -538,27 +590,171 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
         std::string pluginName = plugin["name"].get<std::string>();
         bool enabled = plugin["enabled"].get<bool>();
 
-        int fi = -1;
         for (int fii = 0; fii < mgr.inst.pluginList.size(); ++fii)
         {
             if (0 == strcasecmp(mgr.inst.pluginList[fii].pluginName.c_str(), pluginName.c_str()))
             {
-                fi = fii;
+                mgr.inst.pluginList[fii].enabled = enabled;
                 break;
             }
         }
-        if (fi == -1)
+    }
+
+    // sort plugins
+
+    if (mgr.collection.bundleDefinition.contains("pluginRules"))
+    {
+        std::unordered_map<std::string, std::unique_ptr<PluginDepNode>> pluginNodes;
+        std::unordered_map<std::string, std::vector<std::string>> pluginGroups;
+        std::vector<std::unique_ptr<intrusive::dg_edge<PluginDepNode>>> edges;
+        intrusive::directed_graph<PluginDepNode, &PluginDepNode::dg> dg;
+
+        for (auto&& pluginRule : mgr.collection.bundleDefinition["pluginRules"]["plugins"])
         {
-            std::cout << "Failed to sort plugin: " << pluginName << std::endl;
+            std::unique_ptr<PluginDepNode> node = std::make_unique<PluginDepNode>();
+            std::string name = pluginRule["name"].get<std::string>();
+            name = NormalizePath(name);
+            if (pluginRule.contains("group"))
+            {
+                std::string group = pluginRule["group"].get<std::string>();
+                node->group = group;
+                auto it = pluginGroups.find(group);
+                if (it == pluginGroups.end())
+                {
+                    it = pluginGroups.emplace(group, std::vector<std::string>{}).first;
+                }
+                it->second.emplace_back(name);
+            }
+            node->pluginName = name;
+            pluginNodes.emplace(name, std::move(node));
+
+        }
+
+        for (auto&& node : pluginNodes)
+        {
+            dg.add(node.second.get());
+        }
+
+        for (auto&& pluginRule : mgr.collection.bundleDefinition["pluginRules"]["plugins"])
+        {
+            std::string pluginName = pluginRule["name"].get<std::string>();
+            pluginName = NormalizePath(pluginName);
+            auto src = pluginNodes.find(pluginName);
+            if (pluginRule.contains("after"))
+            {
+                for (auto&& after : pluginRule["after"])
+                {
+                    auto ne = std::make_unique<intrusive::dg_edge<PluginDepNode>>();
+                    auto ref = pluginNodes.find(after.get<std::string>());
+                    if (ref != pluginNodes.end())
+                    {
+                        ne->to = ref->second.get();
+                        ne->from = src->second.get();
+                        dg.addEdge(ne.get());
+                        edges.emplace_back(std::move(ne));
+                    }
+                }
+            }
+            // havent seen a before yet, putting this here just in case
+            if (pluginRule.contains("before"))
+            {
+                for (auto&& after : pluginRule["after"])
+                {
+                    auto ne = std::make_unique<intrusive::dg_edge<PluginDepNode>>();
+                    auto ref = pluginNodes.find(after.get<std::string>());
+                    if (ref != pluginNodes.end())
+                    {
+                        ne->from = ref->second.get();
+                        ne->to = src->second.get();
+                        dg.addEdge(ne.get());
+                        edges.emplace_back(std::move(ne));
+                    }
+                }
+            }
+        }
+
+        for (auto&& groupRule : mgr.collection.bundleDefinition["pluginRules"]["groups"])
+        {
+            std::string groupName = groupRule["name"];
+            // doesnt look like there's a before
+            if (groupRule.contains("after"))
+            {
+                for (auto&& groupAfter : groupRule["after"])
+                {
+                    std::string afterName = groupAfter.get<std::string>();
+                    auto gSrcIt = pluginGroups.find(groupName);
+                    auto gRefIt = pluginGroups.find(afterName);
+                    if (gSrcIt == pluginGroups.end())
+                    {
+                        std::cout << "Failed to find plugin group: " << groupName << std::endl;
+                    }
+                    if (gRefIt == pluginGroups.end())
+                    {
+                        std::cout << "Failed to find plugin group: " << afterName << std::endl;
+                    }
+                    if (gRefIt != pluginGroups.end() && gSrcIt != pluginGroups.end())
+                    {
+                        for (auto&& srcName : gSrcIt->second)
+                        {
+                            for (auto&& refName : gRefIt->second)
+                            {
+                                auto srcIt = pluginNodes.find(srcName);
+                                auto refIt = pluginNodes.find(refName);
+                                if (srcIt != pluginNodes.end() && refIt != pluginNodes.end())
+                                {
+                                    auto ne = std::make_unique<intrusive::dg_edge<PluginDepNode>>();
+                                    ne->to = refIt->second.get();
+                                    ne->from = srcIt->second.get();
+                                    dg.addEdge(ne.get());
+                                    edges.emplace_back(std::move(ne));
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        decltype(dg)::node_list list;
+        bool r = dg.topo_sort(list);
+
+        if (!r)
+        {
+            std::cout << "Failed to sort plugins" << std::endl;
+            mgr.collection.error = true;
+            return;
         }
         else
         {
-            if (fi != p)
+            int i = 0;
+            PluginDepNode* n = list.head;
+            while (n)
             {
-                std::swap(mgr.inst.pluginList[p], mgr.inst.pluginList[fi]);
+                int pi = -1;
+                for (int pii = 0; pii < mgr.inst.pluginList.size(); ++pii)
+                {
+                    if (mgr.inst.pluginList[pii].pluginName == n->pluginName)
+                    {
+                        pi = pii;
+                        break;
+                    }
+                }
+                if (pi != -1)
+                {
+                    if (i != pi)
+                    {
+                        std::swap(mgr.inst.pluginList[i], mgr.inst.pluginList[pi]);
+                    }
+                }
+                else
+                {
+                    std::cout << "Failed to set plugin " << n->pluginName << " to load index " << i << std::endl;
+                }
+                ++i;
+                n = list.resolve(n)->right;
             }
-            ++p;
         }
+
     }
     
 

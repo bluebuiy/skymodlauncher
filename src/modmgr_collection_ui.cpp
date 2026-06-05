@@ -100,6 +100,7 @@ void RenderCollectionWindow(ModMgr& mgr)
             {
                 if (ImGui::Button("Retry"))
                 {
+                    mgr.collection.error = false;
                     DownloadCollectionMods(mgr);
                 }
                 ImGui::Text("Will only re-download failed mods");
@@ -120,7 +121,7 @@ void RenderCollectionWindow(ModMgr& mgr)
                         ++err;
                     }
                 }
-                ImGui::Text("Waiting for %d remaining mods to download", count);
+                ImGui::Text("Waiting for %d remaining mods to download", count - err);
                 ImGui::Text("%d mods failed", err);
                 if (count == err)
                 {
@@ -143,6 +144,7 @@ void RenderCollectionWindow(ModMgr& mgr)
                 if (ImGui::Button("Retry"))
                 {
                     mgr.collection.installIndex = -1;
+                    mgr.collection.error = false;
                     mgr.collection.status = CollectionStatus::InstallingMods;
                 }
                 ImGui::Text("%d mods failed to install", (int)mgr.collection.installErrorInfo.size());

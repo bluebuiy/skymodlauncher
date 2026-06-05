@@ -279,6 +279,7 @@ void RenderFomod(ModMgr& mgr)
         // remove staging
         std::vector<std::string> rmCmd = {
             "/usr/bin/rm",
+            "-f",
             "-r",
             mgr.config.projectDir / fomod.tmpDir
         };
@@ -363,7 +364,7 @@ bool MoveDirNormalizePaths(std::filesystem::path const & src, std::filesystem::p
                     if (np == "data" && stack.size() == 2)
                     {
                         // hopefully nobody put a data directory in the root of a data mod 
-                        if (np != currentPath.filename())
+                        if ("Data" != currentPath.filename())
                         {
                             std::cout << "Detected incorrectly capitalized Data root path: " << currentPath << std::endl;
                         }

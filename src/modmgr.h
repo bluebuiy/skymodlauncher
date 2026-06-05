@@ -63,7 +63,9 @@ struct ModExec
 enum class ModInstallType
 {
     Data,
-    Root
+    Root,
+    Undetermined,
+    Conflicting
 };
 
 struct ModInfo
@@ -249,6 +251,15 @@ namespace FomodAuto
 
 }
 
+struct ManualInstallFile
+{
+    std::string path;
+    std::string md5;
+};
+struct ManualInstallConfig
+{
+    std::vector<ManualInstallFile> paths;
+};
 
 struct ExecToolProgram : public ProcInvoke
 {
@@ -291,12 +302,15 @@ void UpdateDownloads(ModMgr& mgr);
 
 void DeleteMod(ModMgr& mgr, std::string & modFile);
 
-void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, FomodAuto::Config const & conf);
+void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<FomodAuto::Config> const & confFomod, std::optional<ManualInstallConfig> const & confManual);
 void InstallDownloadedFile(ModMgr& mgr, std::string const & modName);
 
 void InitMgr(ModMgr& mgr);
 void CleanupMgr(ModMgr& mgr);
 
+
+
+std::string NormalizePath(std::string const & str);
 
 #include "modmgr_json.h"
 

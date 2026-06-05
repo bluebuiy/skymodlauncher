@@ -38,7 +38,7 @@ int main(int argc, char** argv)
     std::string shArgs;
     bool initDirFlag = false;
     bool initConfigFlag = false;
-    bool verbose = true;
+    bool verbose = false;
     bool execArgs = false;
     bool execProg = false;
     bool invokedRaw = true;
