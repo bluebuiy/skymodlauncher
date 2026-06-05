@@ -448,6 +448,7 @@ struct PluginDepNode
 {
     std::string group;
     std::string pluginName;
+    bool dummy = false;
     intrusive::dg_inject<PluginDepNode> dg;
 };
 
@@ -571,12 +572,12 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
                 if (mit != mgr.inst.mods.end())
                 {
                     mit->loadIndex = i;
+                    ++i;
                 }
                 else
                 {
                     std::cout << "Failed to set load index " << i << " for " << n->name;
                 }
-                ++i;
                 n = list.resolve(n)->right;
             }
         }
@@ -614,21 +615,41 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
             std::unique_ptr<PluginDepNode> node = std::make_unique<PluginDepNode>();
             std::string name = pluginRule["name"].get<std::string>();
             name = NormalizePath(name);
+            std::string group;
             if (pluginRule.contains("group"))
             {
-                std::string group = pluginRule["group"].get<std::string>();
-                node->group = group;
-                auto it = pluginGroups.find(group);
-                if (it == pluginGroups.end())
-                {
-                    it = pluginGroups.emplace(group, std::vector<std::string>{}).first;
-                }
-                it->second.emplace_back(name);
+                group = pluginRule["group"].get<std::string>();
             }
+            else
+            {
+                // apparently the default group is not explicitly assigned
+                group = "default";
+            }
+            node->group = group;
+            auto it = pluginGroups.find(group);
+            if (it == pluginGroups.end())
+            {
+                it = pluginGroups.emplace(group, std::vector<std::string>{}).first;
+            }
+            it->second.emplace_back(name);
             node->pluginName = name;
             pluginNodes.emplace(name, std::move(node));
-
         }
+
+        for (auto&& plugin : mgr.collection.bundleDefinition["plugins"])
+        {
+            std::string pname = plugin["name"].get<std::string>();
+            pname = NormalizePath(pname);
+            auto it = pluginNodes.find(pname);
+            if (it == pluginNodes.end())
+            {
+                auto node = std::make_unique<PluginDepNode>();
+                node->pluginName = pname;
+                node->group = "default";
+                pluginNodes.emplace(pname, std::move(node));
+            }
+        }
+        
 
         for (auto&& node : pluginNodes)
         {
@@ -655,23 +676,61 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
                     }
                 }
             }
-            // havent seen a before yet, putting this here just in case
-            if (pluginRule.contains("before"))
+        }
+
+        auto addGroupRules = [&](std::string const & groupName, std::string const & afterName)
+        {
+            auto gSrcIt = pluginGroups.find(groupName);
+            if (gSrcIt == pluginGroups.end())
             {
-                for (auto&& after : pluginRule["after"])
+                std::cout << "Failed to find plugin group: " << groupName << std::endl;
+                auto dummy = std::make_unique<PluginDepNode>();
+                dummy->dummy = true;
+                dummy->group = groupName;
+                std::string dummyPluginName = std::format("dummy-{}", groupName);
+                dg.add(dummy.get());
+                pluginNodes.emplace(dummyPluginName, std::move(dummy));
+                pluginGroups.emplace(groupName, std::vector<std::string>{dummyPluginName});
+            }
+            auto gRefIt = pluginGroups.find(afterName);
+            if (gRefIt == pluginGroups.end())
+            {
+                std::cout << "Failed to find plugin group: " << afterName << std::endl;
+                auto dummy = std::make_unique<PluginDepNode>();
+                dummy->dummy = true;
+                dummy->group = afterName;
+                std::string dummyPluginName = std::format("dummy-{}", afterName);
+                dg.add(dummy.get());
+                pluginNodes.emplace(dummyPluginName, std::move(dummy));
+                gRefIt = pluginGroups.emplace(afterName, std::vector<std::string>{dummyPluginName}).first;
+            }
+            // re-fetch in case of rehash
+            gSrcIt = pluginGroups.find(groupName);
+            if (gRefIt != pluginGroups.end() && gSrcIt != pluginGroups.end())
+            {
+                for (auto&& srcName : gSrcIt->second)
                 {
-                    auto ne = std::make_unique<intrusive::dg_edge<PluginDepNode>>();
-                    auto ref = pluginNodes.find(after.get<std::string>());
-                    if (ref != pluginNodes.end())
+                    for (auto&& refName : gRefIt->second)
                     {
-                        ne->from = ref->second.get();
-                        ne->to = src->second.get();
-                        dg.addEdge(ne.get());
-                        edges.emplace_back(std::move(ne));
+                        auto srcIt = pluginNodes.find(srcName);
+                        auto refIt = pluginNodes.find(refName);
+                        if (srcIt != pluginNodes.end() && refIt != pluginNodes.end())
+                        {
+                            //std::cout << srcIt->second->group << "  ->  " << refIt->second->group << std::endl;
+                            auto ne = std::make_unique<intrusive::dg_edge<PluginDepNode>>();
+                            ne->from = refIt->second.get();
+                            ne->to = srcIt->second.get();
+                            dg.addEdge(ne.get());
+                            edges.emplace_back(std::move(ne));
+                        }
+                        else
+                        {
+                            std::cout << "Error" << std::endl;
+                        }
                     }
                 }
             }
-        }
+        };
 
         for (auto&& groupRule : mgr.collection.bundleDefinition["pluginRules"]["groups"])
         {
@@ -681,39 +740,13 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
             {
                 for (auto&& groupAfter : groupRule["after"])
                 {
-                    std::string afterName = groupAfter.get<std::string>();
-                    auto gSrcIt = pluginGroups.find(groupName);
-                    auto gRefIt = pluginGroups.find(afterName);
-                    if (gSrcIt == pluginGroups.end())
-                    {
-                        std::cout << "Failed to find plugin group: " << groupName << std::endl;
-                    }
-                    if (gRefIt == pluginGroups.end())
-                    {
-                        std::cout << "Failed to find plugin group: " << afterName << std::endl;
-                    }
-                    if (gRefIt != pluginGroups.end() && gSrcIt != pluginGroups.end())
-                    {
-                        for (auto&& srcName : gSrcIt->second)
-                        {
-                            for (auto&& refName : gRefIt->second)
-                            {
-                                auto srcIt = pluginNodes.find(srcName);
-                                auto refIt = pluginNodes.find(refName);
-                                if (srcIt != pluginNodes.end() && refIt != pluginNodes.end())
-                                {
-                                    auto ne = std::make_unique<intrusive::dg_edge<PluginDepNode>>();
-                                    ne->to = refIt->second.get();
-                                    ne->from = srcIt->second.get();
-                                    dg.addEdge(ne.get());
-                                    edges.emplace_back(std::move(ne));
-                                }
-                            }
-                        }
-                    }
+                    addGroupRules(groupName, groupAfter.get<std::string>());
                 }
             }
         }
+
+        addGroupRules("default", "Early Loaders");
+        addGroupRules("Late Loaders", "default");
 
         decltype(dg)::node_list list;
         bool r = dg.topo_sort(list);
@@ -730,27 +763,30 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
             PluginDepNode* n = list.head;
             while (n)
             {
-                int pi = -1;
-                for (int pii = 0; pii < mgr.inst.pluginList.size(); ++pii)
+                if (!n->dummy)
                 {
-                    if (mgr.inst.pluginList[pii].pluginName == n->pluginName)
+                    int pi = -1;
+                    for (int pii = 0; pii < mgr.inst.pluginList.size(); ++pii)
                     {
-                        pi = pii;
-                        break;
+                        if (mgr.inst.pluginList[pii].pluginName == n->pluginName)
+                        {
+                            pi = pii;
+                            break;
+                        }
+                    }
+                    if (pi != -1)
+                    {
+                        if (i != pi && i < mgr.inst.pluginList.size())
+                        {
+                            std::swap(mgr.inst.pluginList[i], mgr.inst.pluginList[pi]);
+                        }
+                        ++i;
+                    }
+                    else
+                    {
+                        std::cout << "Failed to set plugin " << n->pluginName << " to load index " << i << std::endl;
                     }
                 }
-                if (pi != -1)
-                {
-                    if (i != pi)
-                    {
-                        std::swap(mgr.inst.pluginList[i], mgr.inst.pluginList[pi]);
-                    }
-                }
-                else
-                {
-                    std::cout << "Failed to set plugin " << n->pluginName << " to load index " << i << std::endl;
-                }
-                ++i;
                 n = list.resolve(n)->right;
             }
         }

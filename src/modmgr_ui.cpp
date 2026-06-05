@@ -534,7 +534,7 @@ void RenderModMgr(ModMgr& mgr)
             }
             else if (mgr.sortMode == 1)
             {
-                return a.modFile < b.modFile;
+                return a.hName < b.hName;
             }
             else
             {

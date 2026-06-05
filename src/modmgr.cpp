@@ -1148,21 +1148,48 @@ ModInstallType GuessInstallType(std::filesystem::path modContents, std::filesyst
 
     for (std::filesystem::recursive_directory_iterator di(modContents); di != std::filesystem::recursive_directory_iterator(); ++di)
     {
-        if (di->is_directory())
+        std::string name = di->path().filename();
+        std::string ext = di->path().has_extension() ? di->path().extension() : "";
+        if (0 == strcasecmp(name.c_str(), "Data"))
         {
-            std::string name = di->path().filename();
-            if (0 == strcasecmp(name.c_str(), "Data"))
-            {
-                dataPath = di->path().parent_path();
-                ++dc;
-            }
-            else if (
+            dataPath = di->path().parent_path();
+            ++dc;
+        }
+        else if (
+            di->is_directory() && (
                 0 == strcasecmp(name.c_str(), "meshes") ||
                 0 == strcasecmp(name.c_str(), "textures") ||
                 0 == strcasecmp(name.c_str(), "skse") ||
-                0 == strcasecmp(name.c_str(), "interface")
+                0 == strcasecmp(name.c_str(), "interface") ||
+                0 == strcasecmp(name.c_str(), "sound")
+            ) ||
+            di->is_regular_file() && (
+                ext == ".esp" ||
+                ext == ".esm" ||
+                ext == ".esl" ||
+                ext == ".bsa"
             )
+        )
+        {
+            auto np = di->path().parent_path();
+            if (dataContPath.has_value())
             {
+                if (np != *dataContPath)
+                {
+                    ++dcc;
+                }
+            }
+            else
+            {
+                ++dcc;
+            }
+            dataContPath = np;
+        }
+        else if (di->is_directory() && 0 == strcasecmp(name.c_str(), "scripts"))
+        {
+            if (0 != strcasecmp(di->path().parent_path().filename().c_str(), "source"))
+            {
+                // not very elegant but im not gonna mess with it
                 auto np = di->path().parent_path();
                 if (dataContPath.has_value())
                 {
@@ -1176,26 +1203,6 @@ ModInstallType GuessInstallType(std::filesystem::path modContents, std::filesyst
                     ++dcc;
                 }
                 dataContPath = np;
-            }
-            else if (0 == strcasecmp(name.c_str(), "scripts"))
-            {
-                if (0 != strcasecmp(di->path().parent_path().filename().c_str(), "source"))
-                {
-                    // not very elegant but im not gonna mess with it
-                    auto np = di->path().parent_path();
-                    if (dataContPath.has_value())
-                    {
-                        if (np != *dataContPath)
-                        {
-                            ++dcc;
-                        }
-                    }
-                    else
-                    {
-                        ++dcc;
-                    }
-                    dataContPath = np;
-                }
             }
         }
     }
@@ -1415,6 +1422,7 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
                     if (!applied)
                     {
                         std::cout << "Invalid fomod preset!" << std::endl;
+                        mgr->collection.installErrorInfo.push_back(dl->fileName);
                         mgr->cookingInstall.reset();
                         return;
                     }
@@ -1432,6 +1440,14 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
             // perform file actions
             if (ApplyFomodFileActions(*mgr, actions, realModRoot, installDest))
             {
+                std::filesystem::path _dummy;
+                auto postInstallType = GuessInstallType(installDest, _dummy);
+                if (postInstallType == ModInstallType::Conflicting)
+                {
+                    std::cout << "!!!!!!!! Mod installed incorrectly, manual repair required: " << dl->fileName << std::endl;
+                    mgr->collection.installErrorInfo.push_back(dl->fileName);
+                }
+
                 // create mod entry
                 auto& mod = mgr->inst.mods.emplace_back();
                 mod.enabled = true;

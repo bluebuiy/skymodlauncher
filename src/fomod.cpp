@@ -182,7 +182,7 @@ FileInstall loadFileInstall(pugi::xml_node const & node, FileAction action)
 
     result.source = node.attribute("source").as_string();
     result.destination = node.attribute("destination").as_string();
-    result.alwaysInstall = node.attribute("alwaysInstall").as_bool();
+    result.alwaysInstall = node.attribute("alwaysInstall").as_bool(false);
     result.installIfUsable = node.attribute("installIfUsable").as_bool();
     result.priority = node.attribute("priority").as_int();
     result.action = action;
@@ -695,6 +695,16 @@ InstallActions GetInstallActions(Fomod const & m, Eval const & eval, SubstepInfo
                         act.from = action.source;
                         act.to = action.destination;
                         act.priority = action.priority;
+
+                        // i THINK? the spec says that if it's empty it takes the same value as source, 
+                        // but some mods explicitly put "" which is obviously wrong, and some
+                        // the source is a relative directry which is also wrong to copy over.
+                        // Seems like the the spec is under-specified.
+                        // I have found 2 mods with different expectations to what happens when a destination path is explicitly empty
+                        if (act.action == fomod::FileAction::FileToFile && act.to.empty())
+                        {
+                            act.to = std::filesystem::path(act.from).filename();
+                        }
                     }
                 }
             }

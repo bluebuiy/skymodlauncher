@@ -148,17 +148,33 @@ void RenderCollectionWindow(ModMgr& mgr)
                     mgr.collection.status = CollectionStatus::InstallingMods;
                 }
                 ImGui::Text("%d mods failed to install", (int)mgr.collection.installErrorInfo.size());
+                ImGui::Text("You can manually install the failed mods, then click retry to continue.");
+                for (auto&& msg : mgr.collection.installErrorInfo)
+                {
+                    ImGui::Text("%s", msg.c_str());
+                }
             }
             else
             {
                 ImGui::Text("Installing mods");
-                ImGui::Text("%s", mgr.collection.installingCurrentMod.c_str());
+                ImGui::Text("%d/%d   %s", mgr.inst.mods.size(), mgr.collection.bundleDefinition["mods"].size(), mgr.collection.installingCurrentMod.c_str());
                 UpdateInstallCollectionMods(mgr);
             }
         }
         else if (mgr.collection.status == CollectionStatus::ConfigureLoadOrder)
         {
-            ApplyCollectionLoadOrder(mgr);
+            if (mgr.collection.error)
+            {
+                if (ImGui::Button("Retry load order"))
+                {
+                    mgr.collection.error = false;
+                    ApplyCollectionLoadOrder(mgr);
+                }
+            }
+            else
+            {
+                ApplyCollectionLoadOrder(mgr);
+            }
         }
         else if (mgr.collection.status == CollectionStatus::Installed)
         {
