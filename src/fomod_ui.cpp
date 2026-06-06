@@ -437,6 +437,16 @@ bool ApplyFomodFileActions(ModMgr & mgr, fomod::InstallActions & fileActions, st
     {
         if (action.action == fomod::FileAction::FileToFile)
         {
+            // i THINK empty == "/"? but it really should be explicit
+            if (action.to.empty())
+            {
+                action.to = std::filesystem::path(action.from).filename();
+            }
+            else if (action.to.back() == '/')
+            {
+                action.to = std::filesystem::path(action.to) / std::filesystem::path(action.from).filename();
+            }
+            
             try
             {
                 std::filesystem::path fromPath = action.from;

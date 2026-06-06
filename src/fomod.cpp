@@ -181,14 +181,17 @@ FileInstall loadFileInstall(pugi::xml_node const & node, FileAction action)
     FileInstall result;
 
     result.source = node.attribute("source").as_string();
-    result.destination = node.attribute("destination").as_string();
+    convert_path(result.source);
+    auto destAttr = node.attribute("destination");
+    if (!destAttr.empty())
+    {
+        result.destination = destAttr.as_string();
+        convert_path(*result.destination);
+    }
     result.alwaysInstall = node.attribute("alwaysInstall").as_bool(false);
     result.installIfUsable = node.attribute("installIfUsable").as_bool();
     result.priority = node.attribute("priority").as_int();
     result.action = action;
-
-    convert_path(result.source);
-    convert_path(result.destination);
     
     return result;
 }
@@ -654,7 +657,7 @@ InstallActions GetInstallActions(Fomod const & m, Eval const & eval, SubstepInfo
         auto& act = ret.actions.emplace_back();
         act.action = req.action;
         act.from = req.source;
-        act.to = req.destination;
+        act.to = req.destination.has_value() ? *req.destination : req.source;
         act.priority = req.priority;
     }
 
@@ -669,7 +672,7 @@ InstallActions GetInstallActions(Fomod const & m, Eval const & eval, SubstepInfo
                 auto& act = ret.actions.emplace_back();
                 act.action = action.action;
                 act.from = action.source;
-                act.to = action.destination;
+                act.to = action.destination.has_value() ? *action.destination : action.source;
                 act.priority = action.priority;
 
                 // not sure how alwaysInstall should be handled
@@ -693,18 +696,8 @@ InstallActions GetInstallActions(Fomod const & m, Eval const & eval, SubstepInfo
                         auto& act = ret.actions.emplace_back();
                         act.action = action.action;
                         act.from = action.source;
-                        act.to = action.destination;
+                        act.to = action.destination.has_value() ? *action.destination : action.source;
                         act.priority = action.priority;
-
-                        // i THINK? the spec says that if it's empty it takes the same value as source, 
-                        // but some mods explicitly put "" which is obviously wrong, and some
-                        // the source is a relative directry which is also wrong to copy over.
-                        // Seems like the the spec is under-specified.
-                        // I have found 2 mods with different expectations to what happens when a destination path is explicitly empty
-                        if (act.action == fomod::FileAction::FileToFile && act.to.empty())
-                        {
-                            act.to = std::filesystem::path(act.from).filename();
-                        }
                     }
                 }
             }

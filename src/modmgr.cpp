@@ -1155,13 +1155,35 @@ ModInstallType GuessInstallType(std::filesystem::path modContents, std::filesyst
             dataPath = di->path().parent_path();
             ++dc;
         }
+        else if (di->is_directory() && (
+            0 == strcasecmp(name.c_str(), "scripts") && 0 == strcasecmp(di->path().parent_path().filename().c_str(), "source") ||
+            0 == strcasecmp(name.c_str(), "interface") && 0 == strcasecmp(di->path().parent_path().filename().c_str(), "meshes") ||
+            0 == strcasecmp(name.c_str(), "interface") && 0 == strcasecmp(di->path().parent_path().filename().c_str(), "textures")
+        ))
+        {
+            // not very elegant but im not gonna mess with it
+            auto np = di->path().parent_path().parent_path();
+            if (dataContPath.has_value())
+            {
+                if (np != *dataContPath)
+                {
+                    ++dcc;
+                }
+            }
+            else
+            {
+                ++dcc;
+            }
+            dataContPath = np;
+        }
         else if (
             di->is_directory() && (
                 0 == strcasecmp(name.c_str(), "meshes") ||
                 0 == strcasecmp(name.c_str(), "textures") ||
                 0 == strcasecmp(name.c_str(), "skse") ||
                 0 == strcasecmp(name.c_str(), "interface") ||
-                0 == strcasecmp(name.c_str(), "sound")
+                0 == strcasecmp(name.c_str(), "sound") ||
+                0 == strcasecmp(name.c_str(), "scripts")
             ) ||
             di->is_regular_file() && (
                 ext == ".esp" ||
@@ -1184,26 +1206,6 @@ ModInstallType GuessInstallType(std::filesystem::path modContents, std::filesyst
                 ++dcc;
             }
             dataContPath = np;
-        }
-        else if (di->is_directory() && 0 == strcasecmp(name.c_str(), "scripts"))
-        {
-            if (0 != strcasecmp(di->path().parent_path().filename().c_str(), "source"))
-            {
-                // not very elegant but im not gonna mess with it
-                auto np = di->path().parent_path();
-                if (dataContPath.has_value())
-                {
-                    if (np != *dataContPath)
-                    {
-                        ++dcc;
-                    }
-                }
-                else
-                {
-                    ++dcc;
-                }
-                dataContPath = np;
-            }
         }
     }
     if (dc > 1 || dcc > 1)
@@ -1484,7 +1486,7 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
             }
             else if (guessedInstallType == ModInstallType::Conflicting)
             {
-                std::cout << "!!!!!!!! Mod " << dl->fileName << " may be packaged incorrectly, may be installed wring!  Intalling as " << InstallTypeStr(dl->installType) << std::endl;
+                std::cout << "!!!!!!!! Mod " << dl->fileName << " may be packaged incorrectly, may be installed wrong!  Intalling as " << InstallTypeStr(dl->installType) << std::endl;
             }
             else if (guessedInstallType != dl->installType)
             {

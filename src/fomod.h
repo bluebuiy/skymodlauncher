@@ -135,7 +135,7 @@ namespace fomod
     {
         FileAction action = FileAction::DirToDir;
         std::string source;
-        std::string destination;
+        std::optional<std::string> destination;
         bool alwaysInstall = false;
         bool installIfUsable = false;
         int priority = 0;
