@@ -72,6 +72,8 @@ void RenderNewModDialog(ModMgr& mgr)
         if (ImGui::Button("Submit"))
         {
             mgr.newMod.loadIndex = mgr.inst.mods.size();
+            mgr.newMod.hName = mgr.newMod.modFile;
+            mgr.newMod.lName = mgr.newMod.modFile;
             mgr.inst.mods.emplace_back(mgr.newMod);
             auto path = WordExpand(mgr.config.modFolder);
             if (path)
@@ -527,6 +529,7 @@ void RenderModMgr(ModMgr& mgr)
     ImGui::SetNextWindowSize(ImVec2(dispSize.x * 0.4f, dispSize.y - 20), WINDOW_ALIGN_FLAG);
     if (ImGui::Begin("Mod List"))
     {
+        ImGui::InputText("Search", &mgr.modSearch);
         std::sort(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const & a, ModInfo const & b){
             if (mgr.sortMode == 0)
             {
@@ -547,39 +550,52 @@ void RenderModMgr(ModMgr& mgr)
         int mvDown = -1;
         for (int i = 0; i < mgr.inst.mods.size(); ++i)
         {
-            ImGui::PushID(mgr.inst.mods[i].modFile.c_str());
-                ImGui::Text(" %3d ", mgr.inst.mods[i].loadIndex);
-                ImGui::SameLine();
-                ImGui::Checkbox(" ", &mgr.inst.mods[i].enabled);
-                ImGui::SameLine();
-                ImGui::BeginDisabled(mgr.inst.mods[i].loadIndex == 0);
-                if (ImGui::Button("^"))
-                {
-                    mvUp = i;
-                }
-                ImGui::EndDisabled();
-                ImGui::SameLine();
-                ImGui::BeginDisabled(mgr.inst.mods[i].loadIndex == mgr.inst.mods.size() - 1);
-                if (ImGui::Button("V"))
-                {
-                    mvDown = i;
-                }
-                ImGui::EndDisabled();
-
-                if (mgr.enableRemove)
-                {
+            if (mgr.modSearch.empty() || mgr.inst.mods[i].hName.find(mgr.modSearch, 0) != std::string::npos)
+            {
+                ImGui::PushID(mgr.inst.mods[i].modFile.c_str());
+                    ImGui::Text("%3d", mgr.inst.mods[i].loadIndex);
                     ImGui::SameLine();
-                    ImGui::PushStyleColor(ImGuiCol_Button, DELETE_COLOR);
-                    if (ImGui::Button("Delete"))
+                    ImGui::Checkbox("##enb", &mgr.inst.mods[i].enabled);
+                    ImGui::SameLine();
+                    ImGui::BeginDisabled(mgr.inst.mods[i].loadIndex == 0);
+                    if (ImGui::Button("^"))
                     {
-                        del = i;
+                        mvUp = i;
                     }
-                    ImGui::PopStyleColor(1);
-                }
-                
-                ImGui::SameLine();
-                ImGui::Text("%-32s", mgr.inst.mods[i].hName.c_str());
-            ImGui::PopID();
+                    ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    ImGui::BeginDisabled(mgr.inst.mods[i].loadIndex == mgr.inst.mods.size() - 1);
+                    if (ImGui::Button("V"))
+                    {
+                        mvDown = i;
+                    }
+                    ImGui::EndDisabled();
+                    
+                    ImGui::SameLine();
+                    if (ImGui::Button("@"))
+                    {
+                        std::vector<std::string> args = {
+                            "/usr/bin/xdg-open",
+                            std::string(std::filesystem::path(*WordExpand(mgr.config.modFolder)) / mgr.inst.mods[i].modFile)
+                        };
+                        LaunchProc(args, "/", false);
+                    }
+
+                    if (mgr.enableRemove)
+                    {
+                        ImGui::SameLine();
+                        ImGui::PushStyleColor(ImGuiCol_Button, DELETE_COLOR);
+                        if (ImGui::Button("Delete"))
+                        {
+                            del = i;
+                        }
+                        ImGui::PopStyleColor(1);
+                    }
+                    
+                    ImGui::SameLine();
+                    ImGui::Text("%-32s", mgr.inst.mods[i].hName.c_str());
+                ImGui::PopID();
+            }
         }
         ImGui::Separator();
         if (del != -1)

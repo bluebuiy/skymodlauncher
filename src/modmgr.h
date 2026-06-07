@@ -75,6 +75,7 @@ struct ModInfo
     int modId = 0;
     int fileId = 0;
     std::string modFile;
+    std::string lName;
     std::string hName;
     std::vector<std::string> plugins;
 };
@@ -179,6 +180,8 @@ struct ModMgr
     bool foundSkyrimExe = false;
     bool foundSkyrimIni = false;
     bool openCollectionInput = false;
+    std::string modSearch;
+    std::string dlSearch;
 
     NxmCollectionUrl inputCollection;
 

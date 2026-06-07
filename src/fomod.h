@@ -305,6 +305,7 @@ namespace fomod
         std::vector<Option> options;
         std::string name;
         std::string stepName;
+        bool skipSelectionTypeCheck = false;
     };
 
     struct FileInstallAction

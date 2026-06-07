@@ -135,7 +135,7 @@ bool ExecArgs(std::vector<std::string> & args)
     return true;
 }
 
-bool LaunchProc(std::vector<std::string> & cmd, std::string const & wd)
+bool LaunchProc(std::vector<std::string> & cmd, std::string const & wd, bool wait)
 {
     if (cmd.empty() || cmd[0].empty())
     {
@@ -179,16 +179,19 @@ bool LaunchProc(std::vector<std::string> & cmd, std::string const & wd)
     }
     else
     {
-        int ret = 0;
-        if (pid != waitpid(pid, &ret, 0))
+        if (wait)
         {
-            std::cout << "Error waiting for process completion" << std::endl;
-            return false;
-        }
-        else if (ret != 0)
-        {
-            std::cout << "Process failed with " << ret << std::endl;
-            return false;
+            int ret = 0;
+            if (pid != waitpid(pid, &ret, 0))
+            {
+                std::cout << "Error waiting for process completion" << std::endl;
+                return false;
+            }
+            else if (ret != 0)
+            {
+                std::cout << "Process failed with " << ret << std::endl;
+                return false;
+            }
         }
     }
     return true;

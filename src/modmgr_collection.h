@@ -18,6 +18,7 @@ enum class CollectionStatus
     DownloadingBundle,
     DownloadingMods,
     InstallingMods,
+    InstallWaitingFailedMods,
     ConfigureLoadOrder,
     Installed
 };

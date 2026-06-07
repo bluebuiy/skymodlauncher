@@ -79,6 +79,7 @@ target_sources(skymodlaunch
         src/modmgr_collection_ui.cpp
         src/prochelper.cpp
         src/prochelper.h
+        src/procex.h
         src/procex.cpp
         src/fomod.cpp
         src/fomod.h

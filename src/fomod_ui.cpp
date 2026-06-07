@@ -272,6 +272,7 @@ void RenderFomod(ModMgr& mgr)
         mod.enabled = true;
         mod.loadIndex = mgr.inst.mods.size() - 1;
         mod.modFile = fomod.name;
+        mod.lName = fomod.name;
         mod.fileId = fomod.fileId;
         mod.modId = fomod.modId;
         mod.hName = fomod.hName;

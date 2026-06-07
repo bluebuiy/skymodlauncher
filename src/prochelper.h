@@ -21,7 +21,7 @@ bool ExecArgs(std::vector<std::string> & args);
 
 std::optional<std::string> LaunchProcForOutput(std::vector<std::string> & cmd, std::string const & wd);
 
-bool LaunchProc(std::vector<std::string> & cmd, std::string const & wd);
+bool LaunchProc(std::vector<std::string> & cmd, std::string const & wd, bool wait = true);
 
 
 std::optional<std::vector<std::string>> LaunchProcParsePrint0(std::vector<std::string> & cmd, std::string const & wd);

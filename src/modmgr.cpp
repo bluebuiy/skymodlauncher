@@ -1277,10 +1277,15 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
     }
     
     std::string fileStem = std::filesystem::path(dl->fileName).stem();
+
+    timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+
+    std::string modFileName = std::format("{:#}-{:#}", ts.tv_sec, ts.tv_nsec / 10'000);
     std::filesystem::path staging = mgr.config.projectDir / ".mod_staging";
     std::filesystem::path inFile = mgr.config.projectDir / "download" / dl->fileName;
 
-    auto task = UnzipFile(inFile, staging / fileStem, [mgr = &mgr, staging, fileStem, confCapFomod = confFomod, confCapManual = confManual, fileId, modId](bool succeeded) {
+    auto task = UnzipFile(inFile, staging / fileStem, [mgr = &mgr, staging, fileStem, modFileName, confCapFomod = confFomod, confCapManual = confManual, fileId, modId](bool succeeded) {
         if (!succeeded)
         {
             mgr->cookingInstall.reset();
@@ -1288,8 +1293,8 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
         }
 
         std::filesystem::path modFolder = *WordExpand(mgr->config.modFolder);
-        std::filesystem::create_directories(modFolder / fileStem);
-        std::filesystem::path installDest = modFolder / fileStem;
+        std::filesystem::create_directories(modFolder / modFileName);
+        std::filesystem::path installDest = modFolder / modFileName;
 
         auto dl = std::find_if(mgr->downloadSessions.begin(), mgr->downloadSessions.end(), [&](ModDownloadRt const & dlr)
         {
@@ -1352,10 +1357,16 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
                 auto& mod = mgr->inst.mods.emplace_back();
                 mod.enabled = true;
                 mod.loadIndex = mgr->inst.mods.size() - 1;
-                mod.modFile = fileStem;
+                mod.modFile = modFileName;
+                mod.lName = fileStem;
                 mod.fileId = fileId;
                 mod.modId = modId;
                 mod.hName = dl->hName;
+            }
+            else
+            {
+                mgr->collection.error = true;
+                mgr->collection.installErrorInfo.push_back(fileStem);
             }
         }
         else if (isFomod)
@@ -1382,7 +1393,11 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
             while (true)
             {
                 fomod::SubstepInfo ss = fomod::PrepareSubstep(*fmopt, eval);
-                // TODO check file status?
+                ss.skipSelectionTypeCheck = true;
+                for (auto&& dep : ss.fileChecks)
+                {
+                    dep.second = fomod::FileStatus::Active;
+                }
                 bool visible = fomod::EvalSubstep(*fmopt, eval, ss);
                 if (visible)
                 {
@@ -1446,19 +1461,27 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
                 auto postInstallType = GuessInstallType(installDest, _dummy);
                 if (postInstallType == ModInstallType::Conflicting)
                 {
-                    std::cout << "!!!!!!!! Mod installed incorrectly, manual repair required: " << dl->fileName << std::endl;
+                    std::cout << "!!!!!!!! Mod looks like it installed incorrectly: " << dl->fileName << std::endl;
                     mgr->collection.installErrorInfo.push_back(dl->fileName);
+                    mgr->collection.error = true;
                 }
-
-                // create mod entry
-                auto& mod = mgr->inst.mods.emplace_back();
-                mod.enabled = true;
-                mod.loadIndex = mgr->inst.mods.size() - 1;
-                mod.modFile = fileStem;
-                mod.fileId = fileId;
-                mod.modId = modId;
-                mod.hName = dl->hName;
             }
+            else
+            {
+                mgr->collection.error = true;
+                std::cout << "!!!!!!!! Fomod installed incorrectly, manual install required: " << dl->fileName << std::endl;
+                mgr->collection.installErrorInfo.push_back(dl->fileName);
+            }
+
+            // create mod entry
+            auto& mod = mgr->inst.mods.emplace_back();
+            mod.enabled = true;
+            mod.loadIndex = mgr->inst.mods.size() - 1;
+            mod.modFile = modFileName;
+            mod.lName = fileStem;
+            mod.fileId = fileId;
+            mod.modId = modId;
+            mod.hName = dl->hName;
         }
         else
         {
@@ -1487,6 +1510,8 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
             else if (guessedInstallType == ModInstallType::Conflicting)
             {
                 std::cout << "!!!!!!!! Mod " << dl->fileName << " may be packaged incorrectly, may be installed wrong!  Intalling as " << InstallTypeStr(dl->installType) << std::endl;
+                mgr->collection.installErrorInfo.push_back(dl->fileName);
+                mgr->collection.error = true;
             }
             else if (guessedInstallType != dl->installType)
             {
@@ -1520,7 +1545,8 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
             auto& mod = mgr->inst.mods.emplace_back();
             mod.enabled = true;
             mod.loadIndex = mgr->inst.mods.size() - 1;
-            mod.modFile = fileStem;
+            mod.modFile = modFileName;
+            mod.lName = fileStem;
             mod.fileId = fileId;
             mod.modId = modId;
             mod.hName = dl->hName;
@@ -1676,6 +1702,7 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
             mod.enabled = true;
             mod.loadIndex = mgr.inst.mods.size() - 1;
             mod.modFile = fileStem;
+            mod.lName = fileStem;
             mod.fileId = dl->fileId;
             mod.modId = dl->modId;
             mod.hName = dl->hName;

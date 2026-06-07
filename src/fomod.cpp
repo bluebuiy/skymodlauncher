@@ -561,23 +561,36 @@ bool ApplySubstep(Fomod const & fm, Eval & eval, SubstepInfo & ss)
         optCount += opt.selected;
     }
 
+    bool failedSelectionCheck = false;
     if (ss.optionType == SelectionType::AtLeastOne)
     {
         if (optCount == 0)
         {
-            return false;
+            failedSelectionCheck = true;
         }
     }
     else if (ss.optionType == SelectionType::AtMostOne)
     {
         if (optCount > 1)
         {
-            return false;
+            failedSelectionCheck = true;
         }
     }
     else if (ss.optionType == SelectionType::ExactlyOne)
     {
         if (optCount != 1)
+        {
+            failedSelectionCheck = true;
+        }
+    }
+
+    if (failedSelectionCheck)
+    {
+        if (ss.skipSelectionTypeCheck)
+        {
+            std::cout << "FMOOD: Applied selection does not conform to selection type" << std::endl;
+        }
+        else
         {
             return false;
         }

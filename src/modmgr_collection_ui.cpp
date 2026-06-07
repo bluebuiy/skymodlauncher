@@ -139,6 +139,12 @@ void RenderCollectionWindow(ModMgr& mgr)
         }
         else if (mgr.collection.status == CollectionStatus::InstallingMods)
         {
+            ImGui::Text("Installing mods");
+            ImGui::Text("%d/%d   %s", (int)mgr.inst.mods.size(), (int)mgr.collection.bundleDefinition["mods"].size(), mgr.collection.installingCurrentMod.c_str());
+            UpdateInstallCollectionMods(mgr);
+        }
+        else if (mgr.collection.status == CollectionStatus::InstallWaitingFailedMods)
+        {
             if (mgr.collection.error)
             {
                 if (ImGui::Button("Retry"))
@@ -147,8 +153,10 @@ void RenderCollectionWindow(ModMgr& mgr)
                     mgr.collection.error = false;
                     mgr.collection.status = CollectionStatus::InstallingMods;
                 }
-                ImGui::Text("%d mods failed to install", (int)mgr.collection.installErrorInfo.size());
-                ImGui::Text("You can manually install the failed mods, then click retry to continue.");
+                ImGui::Text("%d mods failed to install, or look wrong.", (int)mgr.collection.installErrorInfo.size());
+                ImGui::TextWrapped("You should manually check or install the failed mods, then click retry to continue.");
+                ImGui::TextWrapped("Some mods will have residual files in their mod folder.");
+                ImGui::Separator();
                 for (auto&& msg : mgr.collection.installErrorInfo)
                 {
                     ImGui::Text("%s", msg.c_str());
@@ -156,9 +164,11 @@ void RenderCollectionWindow(ModMgr& mgr)
             }
             else
             {
-                ImGui::Text("Installing mods");
-                ImGui::Text("%d/%d   %s", mgr.inst.mods.size(), mgr.collection.bundleDefinition["mods"].size(), mgr.collection.installingCurrentMod.c_str());
-                UpdateInstallCollectionMods(mgr);
+                // shouldnt get here
+                if (ImGui::Button("Continue"))
+                {
+                    mgr.collection.status = CollectionStatus::ConfigureLoadOrder;
+                }
             }
         }
         else if (mgr.collection.status == CollectionStatus::ConfigureLoadOrder)

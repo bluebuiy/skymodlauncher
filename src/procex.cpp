@@ -1,6 +1,7 @@
 
 #include "modmgr.h"
 #include "prochelper.h"
+#include "procex.h"
 
 #include <unistd.h>
 #include <sched.h>
@@ -111,6 +112,75 @@ bool SetupPreMountEnv()
     }
 */
 
+std::optional<std::vector<std::string>> BuildMountDataStr(ModMgr& mgr)
+{
+    std::string installRoot;
+    if (auto o = WordExpand(shellFix(mgr.config.installRoot)))
+    {
+        installRoot = *o;
+    }
+    else
+    {
+        std::cout << "Failed to resolve paths" << std::endl;
+        return {};
+    }
+
+    std::string overwrite;
+    if (auto o = WordExpand(shellFix(mgr.config.projectDir / "overwrite")))
+    {
+        overwrite = *o;
+    }
+    else
+    {
+        std::cout << "Failed to resolve paths" << std::endl;
+        return {};
+    }
+    std::string work;
+    if (auto o = WordExpand(shellFix(mgr.config.projectDir / "work")))
+    {
+        work = *o;
+    }
+    else
+    {
+        std::cout << "Failed to resolve paths" << std::endl;
+        return {};
+    }
+
+    std::filesystem::path modDir;
+    if (auto o = WordExpand(shellFix(mgr.config.modFolder)))
+    {
+        modDir = *o;
+    }
+    else
+    {
+        return {};
+    }
+
+    std::sort(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](auto& a, auto& b){ return a.loadIndex < b.loadIndex; });
+
+    std::vector<std::string> datas;
+
+    int modIndex = 0;
+
+    while (modIndex < mgr.inst.mods.size())
+    {
+        std::string lowerLayers;
+        lowerLayers += installRoot;
+
+        for (int i = 0; i < 64 && modIndex < mgr.inst.mods.size(); ++i, ++modIndex)
+        {
+            lowerLayers += ":";
+            int index = mgr.inst.mods.size() - modIndex - 1;
+            lowerLayers += (modDir / mgr.inst.mods[index].modFile);
+        }
+
+        std::string layers = std::format("lowerdir={},upperdir={},workdir={}", lowerLayers, overwrite, work);
+
+        datas.emplace_back(std::move(layers));
+    }
+    return datas;
+}
+
 std::optional<std::vector<std::vector<std::string>>> BuildMountCommands(ModMgr& mgr)
 {
     std::string installRoot;
@@ -166,7 +236,7 @@ std::optional<std::vector<std::vector<std::string>>> BuildMountCommands(ModMgr& 
         std::string lowerLayers;
         lowerLayers += installRoot;
 
-        for (int i = 0; i < 254 && modIndex < mgr.inst.mods.size(); ++i, ++modIndex)
+        for (int i = 0; i < 64 && modIndex < mgr.inst.mods.size(); ++i, ++modIndex)
         {
             lowerLayers += ":";
             int index = mgr.inst.mods.size() - modIndex - 1;
@@ -183,6 +253,8 @@ std::optional<std::vector<std::vector<std::string>>> BuildMountCommands(ModMgr& 
             installRoot
         };
 
+        std::cout << layers << std::endl;
+
         commands.emplace_back(std::move(cmd));
     }
     return commands;
@@ -190,11 +262,14 @@ std::optional<std::vector<std::vector<std::string>>> BuildMountCommands(ModMgr& 
 
 struct ToolRunner : ProcInvoke
 {
-    std::vector<std::vector<std::string>> mountExec;
+    //std::vector<std::vector<std::string>> mountExec;
+    std::vector<MountAction> mountActions;
     std::vector<std::string> toolExec;
     std::string wd;
     void invoke()
     {
+        std::cout << "Apply actions" << std::endl;
+        /*
         for (int i = 0; i < mountExec.size(); ++i)
         {
             if (!LaunchProc(mountExec[i], wd))
@@ -203,6 +278,13 @@ struct ToolRunner : ProcInvoke
                 return;
             }
         }
+        */
+        if (!ApplyMountActions(mountActions))
+        {
+            std::cout << "Failed setting up filesystem" << std::endl;
+            return;
+        }
+
         if (0 != chdir(wd.c_str()))
         {
             int i = errno;
@@ -271,13 +353,13 @@ bool InvokeTool(ModMgr& mgr, std::string const & toolName)
 
     std::cout << "Setting up launcher" << std::endl;
     ToolRunner launcher;
-    auto mountCmds = BuildMountCommands(mgr);
-    if (!mountCmds)
+    auto mountActions = GenerateMountActions(mgr);
+    if (!mountActions)
     {
-        std::cout << "Failed to build mount command" << std::endl;
+        std::cout << "Failed to build mount actions" << std::endl;
         return false;
     }
-    launcher.mountExec = *mountCmds;
+    launcher.mountActions = *mountActions;
     launcher.wd = installRoot;
 
     auto expExecPath = ReplaceEnvVariables(mgr, toolDef.execPath, true);
@@ -368,3 +450,182 @@ bool InvokeProcess(ModMgr& mgr, std::vector<std::string> & args)
     //return ExecArgs(args);
 }
 
+std::optional<std::vector<MountAction>> GenerateMountActions(ModMgr& mgr)
+{
+    std::string installRoot;
+    if (auto o = WordExpand(shellFix(mgr.config.installRoot)))
+    {
+        installRoot = *o;
+    }
+    else
+    {
+        std::cout << "Failed to resolve paths" << std::endl;
+        return {};
+    }
+
+    std::string overwrite;
+    if (auto o = WordExpand(shellFix(mgr.config.projectDir / "overwrite")))
+    {
+        overwrite = *o;
+    }
+    else
+    {
+        std::cout << "Failed to resolve paths" << std::endl;
+        return {};
+    }
+
+    std::string work;
+    if (auto o = WordExpand(shellFix(mgr.config.projectDir / "work")))
+    {
+        work = *o;
+    }
+    else
+    {
+        std::cout << "Failed to resolve paths" << std::endl;
+        return {};
+    }
+
+    std::filesystem::path modDir;
+    if (auto o = WordExpand(shellFix(mgr.config.modFolder)))
+    {
+        modDir = *o;
+    }
+    else
+    {
+        return {};
+    }
+
+    std::sort(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](auto& a, auto& b){ return a.loadIndex < b.loadIndex; });
+
+    std::vector<MountAction> mountActions;
+
+    int modIndex = 0;
+    int leafIndex = 0;
+
+    while (modIndex < mgr.inst.mods.size())
+    {
+        auto& ma = mountActions.emplace_back();
+
+        for (int i = 0; i < 128 && modIndex < mgr.inst.mods.size(); ++i, ++modIndex)
+        {
+            int index = mgr.inst.mods.size() - modIndex - 1;
+            ma.lower.emplace_back(modDir / mgr.inst.mods[index].modFile);
+        }
+        
+        ma.mountPoint = mgr.config.projectDir / ".fs" / std::format("m{}", leafIndex);
+        ma.work = mgr.config.projectDir / ".fs" / std::format("w{}", leafIndex);
+
+        ++leafIndex;
+    }
+
+    // one less for the install root
+    if (leafIndex > 127)
+    {
+        // i think the real limit is 256 but 16k mods should be enough for anyone.
+        // If i can find proper documentation on this, I will update it.
+        std::cout << "Exceeded overlay lowerdir limit of 128 (127 mods)" << std::endl;
+        return {};
+    }
+
+    auto& ma = mountActions.emplace_back();
+
+    ma.lower.emplace_back(installRoot);
+
+    for (int i = 0; i < leafIndex; ++i)
+    {
+        ma.lower.emplace_back(mgr.config.projectDir / ".fs" / std::format("m{}", i));
+    }
+    ma.work = mgr.config.projectDir / ".fs" / "wf";
+    ma.mountPoint = installRoot;
+    ma.upper = overwrite;
+
+    return mountActions;
+}
+
+bool ApplyMountActions(std::vector<MountAction> const & actions)
+{
+    for (auto&& action : actions)
+    {
+        std::filesystem::path p(action.mountPoint);
+        std::filesystem::create_directories(p);
+        if (action.work)
+        {
+            p = *action.work;
+            std::filesystem::create_directories(p);
+        }
+        if (action.upper)
+        {
+            p = *action.upper;
+            std::filesystem::create_directories(p);
+        }
+    }
+
+
+    int c = 0;
+
+    for (auto&& action : actions)
+    {
+        int mfd = fsopen("overlay", 0);
+        if (mfd == -1)
+        {
+            std::cout << "f 0 " << errno << std::endl;
+            close(mfd);
+            return false;
+        }
+
+        for (int i = 0; i < action.lower.size(); ++i)
+        {
+            if (-1 == fsconfig(mfd, FSCONFIG_SET_STRING, "lowerdir+", action.lower[i].c_str(), 0))
+            {
+                std::cout << "f 1 " << i << " " << errno << std::endl;
+                close(mfd);
+                return false;
+            }
+        }
+
+        if (action.work)
+        {
+            if (-1 == fsconfig(mfd, FSCONFIG_SET_STRING, "workdir", action.work->c_str(), 0))
+            {
+                std::cout << "f 3 " << errno << std::endl;
+                close(mfd);
+                return false;
+            }
+        }
+
+        if (-1 == fsconfig(mfd, FSCONFIG_SET_STRING, "xino", "auto", 0))
+        {
+            std::cout << "f 4 " << errno << std::endl;
+            close(mfd);
+            return false;
+        }
+
+        if (-1 == fsconfig(mfd, FSCONFIG_CMD_CREATE, NULL, NULL, 0))
+        {
+            std::cout << "f 5 " << errno << std::endl;
+            close(mfd);
+            return false;
+        }
+
+        // possibly MOUNT_ATTR_RDONLY for all the lower ones
+        int mt = fsmount(mfd, 0, MOUNT_ATTR_NODEV);
+        if (mt == -1)
+        {
+            std::cout << "f 4 " << errno << std::endl;
+            close(mfd);
+            return false;
+        }
+        close(mfd);
+
+        int mr = move_mount(mt, "", 0, action.mountPoint.c_str(), MOVE_MOUNT_F_EMPTY_PATH);
+        if (mr == -1)
+        {
+            std::cout << "f 5 " << errno << std::endl;
+            std::cout << "Failed to attatch mount" << std::endl;
+            close(mt);
+            return false;
+        }
+    }
+
+    return true;
+}

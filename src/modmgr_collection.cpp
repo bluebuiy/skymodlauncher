@@ -363,7 +363,14 @@ void UpdateInstallCollectionMods(ModMgr &mgr)
     if (nextMod >= mgr.collection.bundleDefinition["mods"].size())
     {
         mgr.collection.installIndex = -1;
-        mgr.collection.status = CollectionStatus::ConfigureLoadOrder;
+        if (mgr.collection.error)
+        {
+            mgr.collection.status = CollectionStatus::InstallWaitingFailedMods;
+        }
+        else
+        {
+            mgr.collection.status = CollectionStatus::ConfigureLoadOrder;
+        }
         return;
     }
     ++mgr.collection.installIndex;
