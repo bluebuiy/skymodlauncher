@@ -21,6 +21,7 @@ namespace nlohmann
         JPUT(j, mi, modId);
         JPUT(j, mi, fileId);
         JPUT(j, mi, hName);
+        JPUT(j, mi, lName);
     }
 
     void adl_serializer<ModInfo>::from_json(json const & j, ModInfo& mi)
@@ -31,6 +32,7 @@ namespace nlohmann
         JPULL(j, mi, modId);
         JPULL(j, mi, fileId);
         JPULL(j, mi, hName);
+        JPULL(j, mi, lName);
     }
 
     void adl_serializer<ModMgrConfig>::to_json(json& j, ModMgrConfig const & cfg)
