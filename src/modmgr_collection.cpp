@@ -343,7 +343,6 @@ void DownloadCollectionMods(ModMgr &mgr)
         else
         {
             it->fileId = fileId;
-            ;
             it->modId = modId;
             it->hName = mod["name"].get<std::string>();
         }

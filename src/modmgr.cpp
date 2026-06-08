@@ -1278,10 +1278,7 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
     
     std::string fileStem = std::filesystem::path(dl->fileName).stem();
 
-    timespec ts;
-    clock_gettime(CLOCK_MONOTONIC, &ts);
-
-    std::string modFileName = std::format("{:#}-{:#}", ts.tv_sec, ts.tv_nsec / 10'000);
+    std::string modFileName = std::format("{}-{}", modId, fileId);
     std::filesystem::path staging = mgr.config.projectDir / ".mod_staging";
     std::filesystem::path inFile = mgr.config.projectDir / "download" / dl->fileName;
 
@@ -1676,8 +1673,9 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
     bool isFomod = FindFomod(staging / fileStem, fomodPath, realModRoot);
 
     std::filesystem::path modFolder = *WordExpand(mgr.config.modFolder);
-    std::filesystem::create_directories(modFolder / fileStem);
-    std::filesystem::path installDest = modFolder / fileStem;
+    std::filesystem::path modFileName = std::format("{}-{}", dl->modId, dl->fileId);
+    std::filesystem::path installDest = modFolder / modFileName;
+    std::filesystem::create_directories(installDest);
     if (dl->installType == ModInstallType::Data)
     {
         installDest /= "Data";
@@ -1701,7 +1699,7 @@ void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
             auto& mod = mgr.inst.mods.emplace_back();
             mod.enabled = true;
             mod.loadIndex = mgr.inst.mods.size() - 1;
-            mod.modFile = fileStem;
+            mod.modFile = modFileName;
             mod.lName = fileStem;
             mod.fileId = dl->fileId;
             mod.modId = dl->modId;

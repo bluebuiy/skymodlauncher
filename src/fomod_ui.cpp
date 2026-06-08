@@ -271,7 +271,7 @@ void RenderFomod(ModMgr& mgr)
         auto& mod = mgr.inst.mods.emplace_back();
         mod.enabled = true;
         mod.loadIndex = mgr.inst.mods.size() - 1;
-        mod.modFile = fomod.name;
+        mod.modFile = std::format("{}-{}", fomod.modId, fomod.fileId);
         mod.lName = fomod.name;
         mod.fileId = fomod.fileId;
         mod.modId = fomod.modId;

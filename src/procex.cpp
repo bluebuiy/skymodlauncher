@@ -360,7 +360,24 @@ bool InvokeTool(ModMgr& mgr, std::string const & toolName)
         return false;
     }
     launcher.mountActions = *mountActions;
-    launcher.wd = installRoot;
+    std::string wd = toolDef.wd;
+    if (wd.empty())
+    {
+        wd = "${GAME_ROOT_DIR}";
+    }
+    auto tryWd = ReplaceEnvVariables(mgr, wd, true);
+    if (!tryWd)
+    {
+        std::cout << "Failed substitutions for working directory" << std::endl;
+        return false;
+    }
+    tryWd = WordExpand(shellFix(*tryWd));
+    if (!tryWd)
+    {
+        std::cout << "Failed substitutions for working directory 2" << std::endl;
+        return false;
+    }
+    launcher.wd = *tryWd;
 
     auto expExecPath = ReplaceEnvVariables(mgr, toolDef.execPath, true);
     if (!expExecPath)
@@ -372,18 +389,21 @@ bool InvokeTool(ModMgr& mgr, std::string const & toolName)
 
     for (auto&& arg : toolDef.args)
     {
+        std::cout << arg << std::endl;
         auto narg = ReplaceEnvVariables(mgr, arg, true);
         if (!narg)
         {
             std::cout << "Failed variable subsitution:\n" << arg << std::endl;
             return false;
         }
+        std::cout << *narg << std::endl;
         auto exparg = WordExpand(shellFix(*narg));
         if (!exparg)
         {
             std::cout << "Failed to resolve string" << std::endl;
             return false;
         }
+        std::cout << *exparg << std::endl;
         launcher.toolExec.emplace_back(std::move(*exparg));
     }
 
@@ -513,7 +533,6 @@ std::optional<std::vector<MountAction>> GenerateMountActions(ModMgr& mgr)
         }
         
         ma.mountPoint = mgr.config.projectDir / ".fs" / std::format("m{}", leafIndex);
-        ma.work = mgr.config.projectDir / ".fs" / std::format("w{}", leafIndex);
 
         ++leafIndex;
     }
@@ -593,16 +612,26 @@ bool ApplyMountActions(std::vector<MountAction> const & actions)
             }
         }
 
+        if (action.upper)
+        {
+            if (-1 == fsconfig(mfd, FSCONFIG_SET_STRING, "upperdir", action.upper->c_str(), 0))
+            {
+                std::cout << "f 4 " << errno << std::endl;
+                close(mfd);
+                return false;
+            }
+        }
+
         if (-1 == fsconfig(mfd, FSCONFIG_SET_STRING, "xino", "auto", 0))
         {
-            std::cout << "f 4 " << errno << std::endl;
+            std::cout << "f 5 " << errno << std::endl;
             close(mfd);
             return false;
         }
 
         if (-1 == fsconfig(mfd, FSCONFIG_CMD_CREATE, NULL, NULL, 0))
         {
-            std::cout << "f 5 " << errno << std::endl;
+            std::cout << "f 6 " << errno << std::endl;
             close(mfd);
             return false;
         }
@@ -611,7 +640,7 @@ bool ApplyMountActions(std::vector<MountAction> const & actions)
         int mt = fsmount(mfd, 0, MOUNT_ATTR_NODEV);
         if (mt == -1)
         {
-            std::cout << "f 4 " << errno << std::endl;
+            std::cout << "f 7 " << errno << std::endl;
             close(mfd);
             return false;
         }
@@ -620,7 +649,7 @@ bool ApplyMountActions(std::vector<MountAction> const & actions)
         int mr = move_mount(mt, "", 0, action.mountPoint.c_str(), MOVE_MOUNT_F_EMPTY_PATH);
         if (mr == -1)
         {
-            std::cout << "f 5 " << errno << std::endl;
+            std::cout << "f 8 " << errno << std::endl;
             std::cout << "Failed to attatch mount" << std::endl;
             close(mt);
             return false;

@@ -16,11 +16,16 @@ constexpr ImVec4 DELETE_COLOR = ImVec4(0.7f,0.1f,0.1f,1.0f);
 
 void RenderTestUi(ModMgr& mgr)
 {
-#if 0
+#if 1
+    if (mgr.openTestUi)
+    {
+        mgr.openTestUi = false;
+        ImGui::OpenPopup("testui");
+    }
     static char strBuf[128] = {0};
     static char strBufOut[256] = {0};
     static bool failRep = false;
-    if (ImGui::Begin("Tests"))
+    if (ImGui::BeginPopupModal("testui"))
     {
         ImGui::InputText("Var rep test", strBuf, sizeof(strBuf));
         ImGui::Checkbox("Fail rep", &failRep);
@@ -35,8 +40,8 @@ void RenderTestUi(ModMgr& mgr)
             }
         }
         ImGui::TextWrapped("%s", strBufOut);
+        ImGui::EndPopup();
     }
-    ImGui::End();
 #endif
 }
 
@@ -253,6 +258,14 @@ void RenderTools(ModMgr& mgr)
             ImGui::Text("Path ");
             ImGui::SameLine();
             ImGui::InputText("##Path", &mgr.newExec.execPath);
+            ImGui::Text("Working Directory ");
+            if (ImGui::BeginItemTooltip())
+            {
+                ImGui::Text("If empty, defaults to ${GAME_ROOT_DIR}");
+                ImGui::EndTooltip();
+            }
+            ImGui::SameLine();
+            ImGui::InputText("##Wd", &mgr.newExec.wd);
             ImGui::Text("Arguments:");
             int del = -1;
             for (int i = 0; i < mgr.newExec.args.size(); ++i)
@@ -365,100 +378,104 @@ void RenderModDownloads(ModMgr& mgr)
     ImGui::SetNextWindowSize(ImVec2(dispSize.x * 0.4f, dispSize.y - 20), WINDOW_ALIGN_FLAG);
     if (ImGui::Begin("Downloads"))
     {
+        ImGui::InputText("Search", &mgr.dlSearch);
         for (int i = 0; i < mgr.downloadSessions.size(); ++i)
         {
-            ImGui::PushID(mgr.downloadSessions[i].fileId);
+            if (mgr.dlSearch.empty() || mgr.downloadSessions[i].hName.find(mgr.dlSearch, 0) != std::string::npos)
+            {
+                ImGui::PushID(mgr.downloadSessions[i].fileId);
 
-            ImGui::PushStyleColor(ImGuiCol_Button, DELETE_COLOR);
-            if (ImGui::Button("X"))
-            {
-                mgr.downloadSessions[i].remove = true;
-            }
-            ImGui::SameLine();
-            if (mgr.downloadSessions[i].state == ModDlState::ModDownload)
-            {
-                if (ImGui::Button("||"))
+                ImGui::PushStyleColor(ImGuiCol_Button, DELETE_COLOR);
+                if (ImGui::Button("X"))
                 {
-                    mgr.downloadSessions[i].pause = true;
+                    mgr.downloadSessions[i].remove = true;
                 }
-            }
-            else if (mgr.downloadSessions[i].state == ModDlState::ModPaused)
-            {
-                if (ImGui::Button(">"))
-                {
-                    mgr.downloadSessions[i].unpause = true;
-                }
-            }
-            ImGui::PopStyleColor(1);
-            ImGui::SameLine();
-            char const * state = "Unknown";
-            switch(mgr.downloadSessions[i].state)
-            {
-                case ModDlState::UrlQuery:
-                {
-                    state = "Fetching Info";
-                    break;
-                }
-                case ModDlState::Error:
-                {
-                    state = "Error";
-                    break;
-                }
-                case ModDlState::ModDownload:
-                {
-                    state = "Downloading";
-                    break;
-                }
-                case ModDlState::ModPaused:
-                {
-                    state = "Paused";
-                    break;
-                }
-                case ModDlState::Canceled:
-                {
-                    state = "Canceled";
-                    break;
-                }
-                case ModDlState::Complete:
-                {
-                    state = "Complete";
-                    break;
-                }
-            }
-            ImGui::Text("%-14s ", state);
-            bool doQuickInstall = false;
-            if (mgr.downloadSessions[i].state == ModDlState::Complete)
-            {
                 ImGui::SameLine();
-                doQuickInstall = ImGui::Button("Install");
+                if (mgr.downloadSessions[i].state == ModDlState::ModDownload)
+                {
+                    if (ImGui::Button("||"))
+                    {
+                        mgr.downloadSessions[i].pause = true;
+                    }
+                }
+                else if (mgr.downloadSessions[i].state == ModDlState::ModPaused)
+                {
+                    if (ImGui::Button(">"))
+                    {
+                        mgr.downloadSessions[i].unpause = true;
+                    }
+                }
+                ImGui::PopStyleColor(1);
+                ImGui::SameLine();
+                char const * state = "Unknown";
+                switch(mgr.downloadSessions[i].state)
+                {
+                    case ModDlState::UrlQuery:
+                    {
+                        state = "Fetching Info";
+                        break;
+                    }
+                    case ModDlState::Error:
+                    {
+                        state = "Error";
+                        break;
+                    }
+                    case ModDlState::ModDownload:
+                    {
+                        state = "Downloading";
+                        break;
+                    }
+                    case ModDlState::ModPaused:
+                    {
+                        state = "Paused";
+                        break;
+                    }
+                    case ModDlState::Canceled:
+                    {
+                        state = "Canceled";
+                        break;
+                    }
+                    case ModDlState::Complete:
+                    {
+                        state = "Complete";
+                        break;
+                    }
+                }
+                ImGui::Text("%-14s ", state);
+                bool doQuickInstall = false;
+                if (mgr.downloadSessions[i].state == ModDlState::Complete)
+                {
+                    ImGui::SameLine();
+                    doQuickInstall = ImGui::Button("Install");
+                    if (ImGui::BeginItemTooltip())
+                    {
+                        ImGui::Text("Extracts mod contents directly to the mod directory");
+                        ImGui::EndTooltip();
+                    }
+                }
+                ImGui::SameLine();
+                if (mgr.downloadSessions[i].fileName.empty())
+                {
+                    ImGui::Text("%-64s", mgr.downloadSessions[i].hName.c_str());
+                }
+                else
+                {
+                    ImGui::Text("%-64s", mgr.downloadSessions[i].fileName.c_str());
+                }
+                ImGui::SameLine();
+                ImGui::Text(" ? ");
                 if (ImGui::BeginItemTooltip())
                 {
-                    ImGui::Text("Extracts mod contents directly to the mod directory");
+                    ImGui::Text("Unzips files into /Data, so that they are effectively at ${GAME_ROOT_DIR}/Data");
                     ImGui::EndTooltip();
                 }
-            }
-            ImGui::SameLine();
-            if (mgr.downloadSessions[i].fileName.empty())
-            {
-                ImGui::Text("%-64s", mgr.downloadSessions[i].hName.c_str());
-            }
-            else
-            {
-                ImGui::Text("%-64s", mgr.downloadSessions[i].fileName.c_str());
-            }
-            ImGui::SameLine();
-            ImGui::Text(" ? ");
-            if (ImGui::BeginItemTooltip())
-            {
-                ImGui::Text("Unzips files into /Data, so that they are effectively at ${GAME_ROOT_DIR}/Data");
-                ImGui::EndTooltip();
-            }
-            if (doQuickInstall)
-            {
-                InstallDownloadedFile(mgr, mgr.downloadSessions[i].fileName);
-            }
+                if (doQuickInstall)
+                {
+                    InstallDownloadedFile(mgr, mgr.downloadSessions[i].fileName);
+                }
 
-            ImGui::PopID();
+                ImGui::PopID();
+            }
         }
     }
     ImGui::End();
@@ -496,6 +513,12 @@ void RenderModMgr(ModMgr& mgr)
             ImGui::EndTooltip();
         }
 */
+
+        if (ImGui::Button("Tests"))
+        {
+            mgr.openTestUi = true;
+        }
+
     }
     ImGui::EndMainMenuBar();
     

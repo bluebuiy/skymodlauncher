@@ -83,6 +83,7 @@ namespace nlohmann
     {
         JPUT(j, me, execName);
         JPUT(j, me, execPath);
+        JPUT(j, me, wd);
         JPUT(j, me, args);
         JPUT(j, me, updatePluginList);
     }
@@ -91,6 +92,7 @@ namespace nlohmann
     {
         JPULL(j, me, execName);
         JPULL(j, me, execPath);
+        JPULL(j, me, wd);
         JPULL(j, me, args);
         JPULL(j, me, updatePluginList);
     }

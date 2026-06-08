@@ -41,7 +41,7 @@ std::string shellFix(std::string const & s)
     std::string ret;
     for (int i = 0; i < s.size(); ++i)
     {
-        if (s[i] == ' ')
+        if (s[i] == ' ' || s[i] == '$')
         {
             ret.push_back('\\');
         }

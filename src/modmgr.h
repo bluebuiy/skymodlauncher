@@ -55,6 +55,8 @@ struct ModExec
     std::string execName;
     // the actual path to execute it. ie /usr/bin/wine
     std::string execPath;
+    // working directory
+    std::string wd;
     // ie ~/.wine/GOG Games/Skyrim Anniversary Edition/skse64_launcher.exe
     std::vector<std::string> args;
     bool updatePluginList = false;
@@ -169,6 +171,8 @@ struct ModMgr
     //////// ImGui state cache ////////
 
     std::string currentExec;
+
+    bool openTestUi = false;
 
     bool addingExec = false;
     bool modifyingExec = false;
