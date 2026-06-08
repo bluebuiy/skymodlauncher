@@ -272,7 +272,8 @@ void DownloadCollectionBundle(ModMgr &mgr)
 
 void DownloadCollectionMods(ModMgr &mgr)
 {
-    auto bundlePath = mgr.config.projectDir / ".mod_staging" / std::format("{}-{}", mgr.collection.url.slug, mgr.collection.url.rev) / "collection.json";
+    auto bundleDir = mgr.config.projectDir / ".mod_staging" / std::format("{}-{}", mgr.collection.url.slug, mgr.collection.url.rev);
+    auto bundlePath =  bundleDir / "collection.json";
     std::ifstream bundleFile(bundlePath);
     if (!bundleFile)
     {
@@ -294,57 +295,90 @@ void DownloadCollectionMods(ModMgr &mgr)
 
     for (auto &&mod : mgr.collection.bundleDefinition["mods"])
     {
-        if (mod["source"]["type"].get<std::string>() != "nexus")
+        if (mod["source"]["type"].get<std::string>() == "nexus")
         {
-            std::cout << "Skipping non-nexus mod: " << mod["name"].get<std::string>();
-            continue;
-        }
-        int modId = mod["source"]["modId"].get<int>();
-        int fileId = mod["source"]["fileId"].get<int>();
-        auto it = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [modId, fileId](ModDownloadRt const &dl)
-                               { return dl.fileId == fileId && dl.modId == modId; });
-        std::string type = mod["details"]["type"].get<std::string>();
-        ModInstallType installType = ModInstallType::Data;
-        if (type == "dinput" || type == "enb")
-        {
-            installType = ModInstallType::Root;
-        }
-        else if (!type.empty())
-        {
-            std::cout << "Unknown install type: " << type << std::endl;
-        }
-        std::string modDomain = mod["domainName"].get<std::string>();
-        if (it == mgr.downloadSessions.end())
-        {
-            NxmModFileUrl fileUrl;
-            fileUrl.game = modDomain;
-            fileUrl.fileId = fileId;
-            fileUrl.modId = modId;
-            StartNXMModDownload(mgr, fileUrl, mod["name"].get<std::string>(), installType);
-        }
-        else if (it->state == ModDlState::ModPaused)
-        {
-            // pause doenst do anything yet but just in case
-            it->unpause = true;
-        }
-        else if (it->state != ModDlState::Complete && it->state != ModDlState::ModDownload && it->state != ModDlState::UrlQuery)
-        {
-            // sneakily rename and delete it so we can try to redownload it
-            it->remove = true;
-            it->modId = -1;
-            it->fileId = -1;
+            int modId = mod["source"]["modId"].get<int>();
+            int fileId = mod["source"]["fileId"].get<int>();
+            auto it = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [modId, fileId](ModDownloadRt const &dl)
+                                { return dl.fileId == fileId && dl.modId == modId; });
+            std::string type = mod["details"]["type"].get<std::string>();
+            ModInstallType installType = ModInstallType::Data;
+            if (type == "dinput" || type == "enb")
+            {
+                installType = ModInstallType::Root;
+            }
+            else if (!type.empty())
+            {
+                std::cout << "Unknown install type: " << type << std::endl;
+            }
+            std::string modDomain = mod["domainName"].get<std::string>();
+            if (it == mgr.downloadSessions.end())
+            {
+                NxmModFileUrl fileUrl;
+                fileUrl.game = modDomain;
+                fileUrl.fileId = fileId;
+                fileUrl.modId = modId;
+                StartNXMModDownload(mgr, fileUrl, mod["name"].get<std::string>(), installType);
+            }
+            else if (it->state == ModDlState::ModPaused)
+            {
+                // pause doenst do anything yet but just in case
+                it->unpause = true;
+            }
+            else if (it->state != ModDlState::Complete && it->state != ModDlState::ModDownload && it->state != ModDlState::UrlQuery)
+            {
+                // sneakily rename and delete it so we can try to redownload it
+                it->remove = true;
+                it->modId = -1;
+                it->fileId = -1;
 
-            NxmModFileUrl fileUrl;
-            fileUrl.game = modDomain;
-            fileUrl.fileId = fileId;
-            fileUrl.modId = modId;
-            StartNXMModDownload(mgr, fileUrl, mod["name"].get<std::string>(), installType);
+                NxmModFileUrl fileUrl;
+                fileUrl.game = modDomain;
+                fileUrl.fileId = fileId;
+                fileUrl.modId = modId;
+                StartNXMModDownload(mgr, fileUrl, mod["name"].get<std::string>(), installType);
+            }
+            else
+            {
+                it->fileId = fileId;
+                it->modId = modId;
+                it->hName = mod["name"].get<std::string>();
+            }
         }
-        else
+        else if (mod["source"]["type"].get<std::string>() == "bundle")
         {
-            it->fileId = fileId;
-            it->modId = modId;
-            it->hName = mod["name"].get<std::string>();
+            std::string bundleFileName = mod["source"]["fileExpression"].get<std::string>();
+            auto it = std::find_if(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const & mod) {
+                if (mod.lName == bundleFileName)
+                {
+                    return true;
+                }
+                return false;
+            });
+
+            if (it != mgr.inst.mods.end())
+            {
+                continue;
+            }
+
+            std::string bundleName = mod["name"].get<std::string>();
+            std::string bundleIdent = mod["source"]["tag"].get<std::string>();
+
+            std::cout << "Install bundled mod " << bundleName << std::endl;
+
+            std::filesystem::path bundleModDir = bundleDir / "bundled" / bundleFileName;
+            std::filesystem::path dstDir = std::filesystem::path(*WordExpand(shellFix(mgr.config.modFolder))) / bundleIdent;
+
+            if (!MoveDirNormalizePaths(bundleModDir, dstDir))
+            {
+                std::cout << "Failed to install bundled mod " << bundleFileName << std::endl;
+            }
+
+            auto& modInst = mgr.inst.mods.emplace_back();
+            modInst.lName = bundleFileName;
+            modInst.hName = bundleName;
+            modInst.modFile = bundleIdent;
+            modInst.enabled = true;
         }
     }
 
@@ -378,8 +412,9 @@ void UpdateInstallCollectionMods(ModMgr &mgr)
     int modId = modInfo["source"]["modId"].get<int>();
     int fileId = modInfo["source"]["fileId"].get<int>();
 
-    auto it = std::find_if(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const &m)
-                           { return m.modId == modId && m.fileId == fileId; });
+    auto it = std::find_if(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const &m) {
+        return m.modId == modId && m.fileId == fileId;
+    });
 
     if (it != mgr.inst.mods.end())
     {

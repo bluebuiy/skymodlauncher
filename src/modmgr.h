@@ -74,8 +74,8 @@ struct ModInfo
 {
     bool enabled = false;
     int loadIndex = -1;
-    int modId = 0;
-    int fileId = 0;
+    int modId = -1;
+    int fileId = -1;
     std::string modFile;
     std::string lName;
     std::string hName;
