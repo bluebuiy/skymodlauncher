@@ -483,6 +483,8 @@ std::optional<std::vector<MountAction>> GenerateMountActions(ModMgr& mgr)
         return {};
     }
 
+    std::cout << installRoot << std::endl;
+
     std::string overwrite;
     if (auto o = WordExpand(shellFix(mgr.config.projectDir / "overwrite")))
     {
@@ -493,18 +495,7 @@ std::optional<std::vector<MountAction>> GenerateMountActions(ModMgr& mgr)
         std::cout << "Failed to resolve paths" << std::endl;
         return {};
     }
-
-    std::string work;
-    if (auto o = WordExpand(shellFix(mgr.config.projectDir / "work")))
-    {
-        work = *o;
-    }
-    else
-    {
-        std::cout << "Failed to resolve paths" << std::endl;
-        return {};
-    }
-
+    
     std::filesystem::path modDir;
     if (auto o = WordExpand(shellFix(mgr.config.modFolder)))
     {
@@ -584,6 +575,8 @@ bool ApplyMountActions(std::vector<MountAction> const & actions)
 
     for (auto&& action : actions)
     {
+        std::cout << "mount to: " << action.mountPoint << std::endl;
+
         int mfd = fsopen("overlay", 0);
         if (mfd == -1)
         {

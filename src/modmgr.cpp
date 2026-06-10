@@ -506,7 +506,7 @@ std::optional<std::string> ReplaceEnvVariables(ModMgr& mgr, std::string const & 
         auto it = varMap.find(cv.name);
         if (it != varMap.end())
         {
-            std::cout << "Redefinition of ${" << cv.name << "}, using new value:\n" << it->second << std::endl;
+            std::cout << "Redefinition of ${" << cv.name << "}, using new value:\n" << cv.value << std::endl;
         }
         varMap.insert_or_assign(cv.name, cv.value);
     }
