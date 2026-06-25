@@ -70,22 +70,55 @@ void RenderNewModDialog(ModMgr& mgr)
     ImGui::SetNextWindowSize(ImVec2(300, 200), WINDOW_ALIGN_FLAG);
     if (ImGui::Begin("Add New Mod", &mgr.makingNewMod))
     {
-        ImGui::InputText("Mod folder", &mgr.newMod.modFile);
-        ImGui::Checkbox("Add Enabled" , &mgr.newMod.enabled);
+        int currentItem = static_cast<int>(mgr.newMod.sourceType);
+        if (ImGui::Combo("Type", &currentItem, "Empty\0Nexus\0NxmColBundle\0Direct\0Local\0"))
+        {
+            mgr.newMod.sourceType = static_cast<FileSource>(currentItem);
+        }
+        ImGui::InputText("Name", &mgr.newMod.name);
+        ImGui::InputText("Logical Name", &mgr.newMod.logicalName);
+
+        int curInstType = static_cast<int>(mgr.newMod.installType);
+        if (ImGui::Combo("Install Type", &curInstType, "Data\0Root\0Undetermined\0"))
+        {
+            mgr.newMod.installType = static_cast<ModInstallType>(curInstType);
+        }
+
+        if (mgr.newMod.sourceType == FileSource::Nexus)
+        {
+            ImGui::InputInt("modId", &mgr.newMod.nxmModId, -1);
+            ImGui::InputInt("fileId", &mgr.newMod.nxmFileId, -1);
+            ImGui::InputText("version", &mgr.newMod.version);
+        }
+        else if (mgr.newMod.sourceType == FileSource::CollectionBundle)
+        {
+            ImGui::InputText("Slug", &mgr.newMod.nxmColSlug);
+            ImGui::InputInt("rev", &mgr.newMod.nxmColRev, -1);
+        }
+        else if (mgr.newMod.sourceType == FileSource::Independent)
+        {
+            ImGui::TextColored(ImVec4(1,0,0,1), "NOT IMPLEMENTED!");
+            ImGui::InputText("download url", &mgr.newMod.url);
+        }
+        else if (mgr.newMod.sourceType == FileSource::Manual)
+        {
+            ImGui::TextColored(ImVec4(1,0,0,1), "NOT IMPLEMENTED!");
+            ImGui::InputText("Path", &mgr.newMod.path);
+        }
+
         ImGui::NewLine();
         ImGui::NewLine();
         if (ImGui::Button("Submit"))
         {
-            mgr.newMod.loadIndex = mgr.inst.mods.size();
-            mgr.newMod.hName = mgr.newMod.modFile;
-            mgr.newMod.lName = mgr.newMod.modFile;
-            mgr.inst.mods.emplace_back(mgr.newMod);
-            auto path = WordExpand(mgr.config.modFolder);
-            if (path)
+            auto mmid = FindModManifest(mgr, mgr.newMod);
+            if (mmid.id != 0)
             {
-                std::filesystem::create_directories(std::filesystem::path(*path) / mgr.newMod.modFile);
+                std::cout << "An identical mod manifest already exists!" << std::endl;
             }
-            mgr.newMod.modFile.clear();
+            else
+            {
+                CreateModManifest(mgr, mgr.newMod);
+            }
         }
     }
     ImGui::End();
@@ -381,7 +414,8 @@ void RenderModDownloads(ModMgr& mgr)
         ImGui::InputText("Search", &mgr.dlSearch);
         for (int i = 0; i < mgr.downloadSessions.size(); ++i)
         {
-            if (mgr.dlSearch.empty() || mgr.downloadSessions[i].hName.find(mgr.dlSearch, 0) != std::string::npos)
+            auto mf = GetModManifest(mgr, mgr.downloadSessions[i].id);
+            if (mgr.dlSearch.empty() || mf && (mf->logicalName.find(mgr.dlSearch, 0) != std::string::npos || mf->name.find(mgr.dlSearch, 0) != std::string::npos))
             {
                 ImGui::PushID(mgr.downloadSessions[i].fileId);
 
@@ -454,14 +488,8 @@ void RenderModDownloads(ModMgr& mgr)
                     }
                 }
                 ImGui::SameLine();
-                if (mgr.downloadSessions[i].fileName.empty())
-                {
-                    ImGui::Text("%-64s", mgr.downloadSessions[i].hName.c_str());
-                }
-                else
-                {
-                    ImGui::Text("%-64s", mgr.downloadSessions[i].fileName.c_str());
-                }
+                auto mf = GetModManifest(mgr, mgr.downloadSessions[i].id);
+                ImGui::Text("%-64s", mf ? mf->logicalName.c_str() : mgr.downloadSessions[i].fileName.c_str());
                 ImGui::SameLine();
                 ImGui::Text(" ? ");
                 if (ImGui::BeginItemTooltip())
@@ -471,7 +499,7 @@ void RenderModDownloads(ModMgr& mgr)
                 }
                 if (doQuickInstall)
                 {
-                    InstallDownloadedFile(mgr, mgr.downloadSessions[i].fileName);
+                    InstallMod(mgr, mgr.downloadSessions[i].id, {});
                 }
 
                 ImGui::PopID();
@@ -553,14 +581,43 @@ void RenderModMgr(ModMgr& mgr)
     if (ImGui::Begin("Mod List"))
     {
         ImGui::InputText("Search", &mgr.modSearch);
-        std::sort(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const & a, ModInfo const & b){
+        std::vector<ModId> modList;
+        std::sort(modList.begin(), modList.end(), [&](ModId const & a, ModId const & b){
+            auto ia = mgr.inst.modFileManifests.find(a);
+            auto ib = mgr.inst.modFileManifests.find(b);
+            if (ia == mgr.inst.modFileManifests.end() && ib == mgr.inst.modFileManifests.end())
+            {
+                return true;
+            }
+            else if (ia == mgr.inst.modFileManifests.end())
+            {
+                return false;
+            }
+            else if (ib == mgr.inst.modFileManifests.end())
+            {
+                return true;
+            }
             if (mgr.sortMode == 0)
             {
-                return a.loadIndex < b.loadIndex;
+                auto iai = mgr.inst.modInstalls.find(ia->second.installInstances.empty() ? ModInstallId{0} : ia->second.installInstances[0]);
+                auto ibi = mgr.inst.modInstalls.find(ib->second.installInstances.empty() ? ModInstallId{0} : ib->second.installInstances[0]);
+                if (iai == mgr.inst.modInstalls.end() && ibi == mgr.inst.modInstalls.end())
+                {
+                    return true;
+                }
+                else if (iai == mgr.inst.modInstalls.end())
+                {
+                    return false;
+                }
+                else if (ibi == mgr.inst.modInstalls.end())
+                {
+                    return true;
+                }
+                return iai->second.loadIndex < ibi->second.loadIndex;
             }
             else if (mgr.sortMode == 1)
             {
-                return a.hName < b.hName;
+                return ia->second.name < ib->second.name;
             }
             else
             {
@@ -571,14 +628,32 @@ void RenderModMgr(ModMgr& mgr)
         int del = -1;
         int mvUp = -1;
         int mvDown = -1;
-        for (int i = 0; i < mgr.inst.mods.size(); ++i)
+        for (int i = 0; i < modList.size(); ++i)
         {
-            if (mgr.modSearch.empty() || mgr.inst.mods[i].hName.find(mgr.modSearch, 0) != std::string::npos)
+            auto mf = GetModManifest(mgr, modList[i]);
+            if (
+                mf && (
+                    mgr.modSearch.empty() || (
+                        mf->name.find(mgr.modSearch, 0) != std::string::npos || 
+                        mf->logicalName.find(mgr.modSearch, 0) != std::string::npos
+                    )
+                )
+            )
             {
-                ImGui::PushID(mgr.inst.mods[i].modFile.c_str());
-                    ImGui::Text("%3d", mgr.inst.mods[i].loadIndex);
+                auto inst = GetModInstall(mgr, mf->installInstances.empty() ? ModInstallId{0} : mf->installInstances[0]);
+                ImGui::PushID(mf->logicalName.c_str());
+
+                    if (inst)
+                        ImGui::Text("%3d", inst->loadIndex);
+                    else
+                        ImGui::Text("   ");
+
                     ImGui::SameLine();
-                    ImGui::Checkbox("##enb", &mgr.inst.mods[i].enabled);
+                    bool enb = false;
+                    ImGui::Checkbox("##enb", inst ? &inst->enabled : &enb);
+
+                    // need to make actually good load index ui
+                    /*
                     ImGui::SameLine();
                     ImGui::BeginDisabled(mgr.inst.mods[i].loadIndex == 0);
                     if (ImGui::Button("^"))
@@ -593,16 +668,19 @@ void RenderModMgr(ModMgr& mgr)
                         mvDown = i;
                     }
                     ImGui::EndDisabled();
+                    */
                     
                     ImGui::SameLine();
+                    ImGui::BeginDisabled(!inst);
                     if (ImGui::Button("@"))
                     {
                         std::vector<std::string> args = {
                             "/usr/bin/xdg-open",
-                            std::string(std::filesystem::path(*WordExpand(mgr.config.modFolder)) / mgr.inst.mods[i].modFile)
+                            std::string(std::filesystem::path(*WordExpand(mgr.config.modFolder)) / inst->installDir)
                         };
                         LaunchProc(args, "/", false);
                     }
+                    ImGui::EndDisabled();
 
                     if (mgr.enableRemove)
                     {
@@ -616,17 +694,18 @@ void RenderModMgr(ModMgr& mgr)
                     }
                     
                     ImGui::SameLine();
-                    ImGui::Text("%-32s", mgr.inst.mods[i].hName.c_str());
+                    ImGui::Text("%-32s", mf->logicalName.c_str());
                 ImGui::PopID();
             }
         }
         ImGui::Separator();
         if (del != -1)
         {
-            DeleteMod(mgr, mgr.inst.mods[del].modFile);
-            mgr.inst.mods.erase(mgr.inst.mods.begin() + del);
+            DeleteMod(mgr, modList[del]);
             CorrectLoadIndexes(mgr);
+            SaveModMgr(mgr);
         }
+        /*
         else if (mvUp != -1)
         {
             int l = mgr.inst.mods[mvUp].loadIndex;
@@ -658,6 +737,7 @@ void RenderModMgr(ModMgr& mgr)
             CorrectLoadIndexes(mgr);
             SaveModMgr(mgr);
         }
+        */
     }
     ImGui::End();
 
@@ -679,7 +759,10 @@ void RenderModMgr(ModMgr& mgr)
     if (mgr.openCollectionInput)
     {
         mgr.openCollectionInput = false;
-        mgr.inputCollection = mgr.inst.collection;
+        if (mgr.inst.collection)
+        {
+            mgr.inputCollection = mgr.inst.collection->url;
+        }
         ImGui::OpenPopup("Input Collection");
     }
     bool open = true;

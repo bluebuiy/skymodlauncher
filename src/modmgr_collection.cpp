@@ -10,6 +10,7 @@
 #include <iostream>
 #include <fstream>
 #include <unordered_map>
+#include <iostream>
 
 struct ColInfoDlFinished
 {
@@ -30,7 +31,6 @@ struct ColBundleDlFinished
     void operator()(CurlEasyTaskResult &result);
 };
 
-constexpr char NXM_GQL_ENDPOINT[] = "https://api.nexusmods.com/v2/graphql";
 
 bool str_to_int64(std::string const &str, int64_t &out)
 {
@@ -53,10 +53,15 @@ bool str_to_int64(std::string const &str, int64_t &out)
 
 void ColInfoDlFinished::operator()(CurlEasyTaskResult &result)
 {
+    if (!mgr->inst.collection)
+    {
+        std::cout << "Collection disappeared!" << std::endl;
+        return;
+    }
     if (result.canceled || result.cError != CURLE_OK || result.httpCode != 200)
     {
         std::cout << "Failed to fetch collection info: " << result.cError << " " << result.httpCode << " " << result.canceled << std::endl;
-        mgr->collection.error = true;
+        mgr->inst.collection->error = true;
         return;
     }
 
@@ -64,7 +69,7 @@ void ColInfoDlFinished::operator()(CurlEasyTaskResult &result)
     if (!jr.is_object())
     {
         std::cout << "Invalid response" << std::endl;
-        mgr->collection.error = true;
+        mgr->inst.collection->error = true;
         return;
     }
     else if (jr.contains("errors"))
@@ -80,32 +85,39 @@ void ColInfoDlFinished::operator()(CurlEasyTaskResult &result)
         }
     }
 
+    mgr->inst.collection->bundleDefinition = jr;
+
     try
     {
         auto const &data = jr.at("data").at("collectionRevision");
         auto const &col = data.at("collection");
 
-        str_to_int64(data.at("totalSize").get<std::string>(), mgr->collection.info.totalSize);
-        mgr->collection.info.modCount = data.at("modCount").get<int>();
-        mgr->collection.info.downloadLinkLink = data.at("downloadLink").get<std::string>();
-        mgr->collection.info.description = col.at("description").get<std::string>();
-        mgr->collection.info.name = col.at("name").get<std::string>();
-        mgr->collection.info.summary = col.at("summary").get<std::string>();
+        str_to_int64(data.at("totalSize").get<std::string>(), mgr->inst.collection->info.totalSize);
+        mgr->inst.collection->info.modCount = data.at("modCount").get<int>();
+        mgr->inst.collection->info.downloadLinkLink = data.at("downloadLink").get<std::string>();
+        mgr->inst.collection->info.description = col.at("description").get<std::string>();
+        mgr->inst.collection->info.name = col.at("name").get<std::string>();
+        mgr->inst.collection->info.summary = col.at("summary").get<std::string>();
 
-        mgr->collection.status = CollectionStatus::WaitingForInstallButton;
+        mgr->inst.collection->status = CollectionStatus::WaitingForInstallButton;
     }
     catch (...)
     {
-        mgr->collection.error = true;
+        mgr->inst.collection->error = true;
     }
 }
 
 void ColLinkDlFinished::operator()(CurlEasyTaskResult &result)
 {
+    if (!mgr->inst.collection)
+    {
+        std::cout << "Collection disappeared!" << std::endl;
+        return;
+    }
     if (result.canceled || result.cError != CURLE_OK || result.httpCode != 200)
     {
         std::cout << "Failed to fetch collection bundle link: " << result.cError << " " << result.httpCode << " " << result.canceled << std::endl;
-        mgr->collection.error = true;
+        mgr->inst.collection->error = true;
         return;
     }
 
@@ -113,7 +125,7 @@ void ColLinkDlFinished::operator()(CurlEasyTaskResult &result)
     if (!jr.is_object())
     {
         std::cout << "Invalid json" << std::endl;
-        mgr->collection.error = true;
+        mgr->inst.collection->error = true;
         return;
     }
     std::string link;
@@ -124,27 +136,32 @@ void ColLinkDlFinished::operator()(CurlEasyTaskResult &result)
     catch (...)
     {
         std::cout << "Failed to extract download link" << std::endl;
-        mgr->collection.error = true;
+        mgr->inst.collection->error = true;
         return;
     }
-    mgr->collection.info.downloadLink = link;
-    mgr->collection.status = CollectionStatus::DownloadingBundle;
+    mgr->inst.collection->info.downloadLink = link;
+    mgr->inst.collection->status = CollectionStatus::DownloadingBundle;
 
     DownloadCollectionBundle(*mgr);
 }
 
 void ColBundleDlFinished::operator()(CurlEasyTaskResult &result)
 {
+    if (!mgr->inst.collection)
+    {
+        std::cout << "Collection disappeared!" << std::endl;
+        return;
+    }
     if (result.canceled || result.cError != CURLE_OK || result.httpCode != 200)
     {
         std::cout << "Failed to download collection bundle: " << result.cError << " " << result.httpCode << " " << result.canceled << std::endl;
-        mgr->collection.error = true;
+        mgr->inst.collection->error = true;
         return;
     }
 
     result.file.destroy();
 
-    std::string ccname = std::format("{}-{}", mgr->collection.url.slug, mgr->collection.url.rev);
+    std::string ccname = std::format("{}-{}", mgr->inst.collection->url.slug, mgr->inst.collection->url.rev);
     std::filesystem::path outDir = mgr->config.projectDir / ".mod_staging" / ccname;
     std::vector<std::string> extractCmd = {
         "/usr/bin/7z",
@@ -159,7 +176,7 @@ void ColBundleDlFinished::operator()(CurlEasyTaskResult &result)
     if (!LaunchProc(extractCmd, "/"))
     {
         std::cout << "Failed to extract bundle" << std::endl;
-        mgr->collection.error = true;
+        mgr->inst.collection->error = true;
         return;
     }
 
@@ -170,15 +187,19 @@ void ColBundleDlFinished::operator()(CurlEasyTaskResult &result)
 
 void StartNXMCollectionInstall(ModMgr &mgr, NxmCollectionUrl const &url)
 {
-    if (mgr.collection.status != CollectionStatus::None)
+    std::cout << "COllection has value: " << mgr.inst.collection.has_value() << std::endl;
+
+    if (mgr.inst.collection.has_value())
     {
         return;
     }
 
     std::cout << "Fetching collection data: " << url.game << "-" << url.slug << "-" << url.rev << std::endl;
 
-    mgr.collection.url = url;
-    mgr.collection.status = CollectionStatus::FetchingInfo;
+    mgr.inst.collection = NxmCollection{};
+
+    mgr.inst.collection->url = url;
+    mgr.inst.collection->status = CollectionStatus::FetchingInfo;
 
     ColInfoDlFinished f;
     f.mgr = &mgr;
@@ -223,7 +244,7 @@ void StartNXMCollectionInstall(ModMgr &mgr, NxmCollectionUrl const &url)
 
     task.task->type = HttpType::Post;
     task.task->SetHeader("apikey", mgr.config.nexusApiKey);
-    task.task->SetUrl(NXM_GQL_ENDPOINT);
+    task.task->SetUrl("https://api.nexusmods.com/v2/graphql");
     task.task->contentType = "application/json";
 
     task.Start(mgr.curlEngine);
@@ -231,22 +252,33 @@ void StartNXMCollectionInstall(ModMgr &mgr, NxmCollectionUrl const &url)
 
 void GetCollectionBundleLink(ModMgr &mgr)
 {
+    if (!mgr.inst.collection)
+    {
+        std::cout << "Collection disappeared!" << std::endl;
+        return;
+    }
+
     ColLinkDlFinished res;
     res.mgr = &mgr;
 
     auto task = CreateTask<CurlEasyTask>(std::move(res));
     task.task->SetHeader("apikey", mgr.config.nexusApiKey);
-    std::string url = std::format("https://api.nexusmods.com{}", mgr.collection.info.downloadLinkLink);
+    std::string url = std::format("https://api.nexusmods.com{}", mgr.inst.collection->info.downloadLinkLink);
     task.task->SetUrl(url.c_str());
     task.task->type = HttpType::Get;
 
-    mgr.collection.status = CollectionStatus::FetchingBundleLink;
+    mgr.inst.collection->status = CollectionStatus::FetchingBundleLink;
     task.Start(mgr.curlEngine);
 }
 
 void DownloadCollectionBundle(ModMgr &mgr)
 {
-    std::cout << "Downloading collection bundle at " << mgr.collection.info.downloadLink << std::endl;
+    if (!mgr.inst.collection)
+    {
+        std::cout << "Collection disappeared!" << std::endl;
+        return;
+    }
+    std::cout << "Downloading collection bundle at " << mgr.inst.collection->info.downloadLink << std::endl;
 
     ColBundleDlFinished res;
 
@@ -254,9 +286,9 @@ void DownloadCollectionBundle(ModMgr &mgr)
 
     auto task = CreateTask<CurlEasyTask>(std::move(res));
     task.task->SetHeader("apikey", mgr.config.nexusApiKey);
-    task.task->SetUrl(mgr.collection.info.downloadLink.c_str());
+    task.task->SetUrl(mgr.inst.collection->info.downloadLink.c_str());
     task.task->type = HttpType::Get;
-    std::filesystem::path colbundlePath = mgr.config.projectDir / "download" / std::format("{}-{}", mgr.collection.url.slug, mgr.collection.url.rev);
+    std::filesystem::path colbundlePath = mgr.config.projectDir / "download" / std::format("{}-{}", mgr.inst.collection->url.slug, mgr.inst.collection->url.rev);
     std::cout << "Saving bundle at " << colbundlePath << std::endl;
     std::filesystem::create_directories(colbundlePath.parent_path());
     FileWrapper fw = fopen(colbundlePath.c_str(), "wb");
@@ -266,59 +298,78 @@ void DownloadCollectionBundle(ModMgr &mgr)
         return;
     }
     task.task->file = std::move(fw);
-    mgr.collection.status = CollectionStatus::DownloadingBundle;
+    mgr.inst.collection->status = CollectionStatus::DownloadingBundle;
     task.Start(mgr.curlEngine);
 }
 
 void DownloadCollectionMods(ModMgr &mgr)
 {
-    auto bundleDir = mgr.config.projectDir / ".mod_staging" / std::format("{}-{}", mgr.collection.url.slug, mgr.collection.url.rev);
+    if (!mgr.inst.collection)
+    {
+        std::cout << "Collection disappeared!" << std::endl;
+        return;
+    }
+    auto bundleDir = mgr.config.projectDir / ".mod_staging" / std::format("{}-{}", mgr.inst.collection->url.slug, mgr.inst.collection->url.rev);
     auto bundlePath =  bundleDir / "collection.json";
     std::ifstream bundleFile(bundlePath);
     if (!bundleFile)
     {
         std::cout << "Failed to load collection definition " << bundlePath << std::endl;
-        mgr.collection.error = true;
+        mgr.inst.collection->error = true;
         return;
     }
 
-    mgr.collection.bundleDefinition = nlohmann::json::parse(bundleFile, nullptr, false);
+    mgr.inst.collection->bundleDefinition = nlohmann::json::parse(bundleFile, nullptr, false);
     bundleFile.close();
-    if (mgr.collection.bundleDefinition.is_discarded())
+    if (mgr.inst.collection->bundleDefinition.is_discarded())
     {
         std::cout << "Invalid json in bundle definition" << std::endl;
-        mgr.collection.error = true;
+        mgr.inst.collection->error = true;
         return;
     }
 
-    std::string game = mgr.collection.bundleDefinition["info"]["domainName"];
+    std::string game = mgr.inst.collection->bundleDefinition["info"]["domainName"];
 
-    for (auto &&mod : mgr.collection.bundleDefinition["mods"])
+    for (auto &&mod : mgr.inst.collection->bundleDefinition["mods"])
     {
+        ModInstallType installType = ModInstallType::Data;
+        std::string typeStr = mod["details"]["type"].get<std::string>();
+        if (typeStr == "dinput" || typeStr == "enb")
+        {
+            installType = ModInstallType::Root;
+        }
+        else if (!typeStr.empty())
+        {
+            std::cout << "Unknown install type: " << typeStr << std::endl;
+        }
+
         if (mod["source"]["type"].get<std::string>() == "nexus")
         {
             int modId = mod["source"]["modId"].get<int>();
             int fileId = mod["source"]["fileId"].get<int>();
-            auto it = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [modId, fileId](ModDownloadRt const &dl)
-                                { return dl.fileId == fileId && dl.modId == modId; });
-            std::string type = mod["details"]["type"].get<std::string>();
-            ModInstallType installType = ModInstallType::Data;
-            if (type == "dinput" || type == "enb")
-            {
-                installType = ModInstallType::Root;
-            }
-            else if (!type.empty())
-            {
-                std::cout << "Unknown install type: " << type << std::endl;
-            }
+            
             std::string modDomain = mod["domainName"].get<std::string>();
+
+            ModManifest manifest;
+            manifest.sourceType = FileSource::Nexus;
+            manifest.nxmModId = modId;
+            manifest.nxmFileId = fileId;
+            manifest.nxmDomain = modDomain;
+            manifest.logicalName = mod["source"]["logicalFilename"].get<std::string>();
+            manifest.name = mod["name"].get<std::string>();
+            manifest.installType = installType;
+            
+            auto mmid = CreateModManifest(mgr, manifest);
+
+            auto it = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const &dl) {
+                return dl.id == mmid;
+            });
+            
+
             if (it == mgr.downloadSessions.end())
             {
-                NxmModFileUrl fileUrl;
-                fileUrl.game = modDomain;
-                fileUrl.fileId = fileId;
-                fileUrl.modId = modId;
-                StartNXMModDownload(mgr, fileUrl, mod["name"].get<std::string>(), installType);
+                // url, mod["name"].get<std::string>(), installType
+                InitializeNXMModDownload2(mgr, mmid);
             }
             else if (it->state == ModDlState::ModPaused)
             {
@@ -327,62 +378,37 @@ void DownloadCollectionMods(ModMgr &mgr)
             }
             else if (it->state != ModDlState::Complete && it->state != ModDlState::ModDownload && it->state != ModDlState::UrlQuery)
             {
-                // sneakily rename and delete it so we can try to redownload it
+                // sneakily wipe and delete it so we can try to redownload it
                 it->remove = true;
-                it->modId = -1;
-                it->fileId = -1;
+                it->id.id = 0;
 
-                NxmModFileUrl fileUrl;
-                fileUrl.game = modDomain;
-                fileUrl.fileId = fileId;
-                fileUrl.modId = modId;
-                StartNXMModDownload(mgr, fileUrl, mod["name"].get<std::string>(), installType);
+                InitializeNXMModDownload2(mgr, mmid);
             }
-            else
-            {
-                it->fileId = fileId;
-                it->modId = modId;
-                it->hName = mod["name"].get<std::string>();
-            }
+            //else
+            //{
+            //    it->fileId = fileId;
+            //    it->modId = modId;
+            //    it->hName = mod["name"].get<std::string>();
+            //}
         }
         else if (mod["source"]["type"].get<std::string>() == "bundle")
         {
             std::string bundleFileName = mod["source"]["fileExpression"].get<std::string>();
-            auto it = std::find_if(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const & mod) {
-                if (mod.lName == bundleFileName)
-                {
-                    return true;
-                }
-                return false;
-            });
 
-            if (it != mgr.inst.mods.end())
-            {
-                continue;
-            }
+            ModManifest manifest;
+            manifest.sourceType = FileSource::CollectionBundle;
+            manifest.nxmColSlug = mgr.inst.collection->url.slug;
+            manifest.nxmColRev = mgr.inst.collection->url.rev;
+            manifest.nxmColBundleFile = bundleFileName;
+            manifest.name = mod["name"].get<std::string>();
+            manifest.logicalName = mod["source"]["logicalFilename"].get<std::string>();
+            manifest.installType = installType;
 
-            std::string bundleName = mod["name"].get<std::string>();
-            std::string bundleIdent = mod["source"]["tag"].get<std::string>();
-
-            std::cout << "Install bundled mod " << bundleName << std::endl;
-
-            std::filesystem::path bundleModDir = bundleDir / "bundled" / bundleFileName;
-            std::filesystem::path dstDir = std::filesystem::path(*WordExpand(shellFix(mgr.config.modFolder))) / bundleIdent;
-
-            if (!MoveDirNormalizePaths(bundleModDir, dstDir))
-            {
-                std::cout << "Failed to install bundled mod " << bundleFileName << std::endl;
-            }
-
-            auto& modInst = mgr.inst.mods.emplace_back();
-            modInst.lName = bundleFileName;
-            modInst.hName = bundleName;
-            modInst.modFile = bundleIdent;
-            modInst.enabled = true;
+            auto mmid = CreateModManifest(mgr, manifest);
         }
     }
 
-    mgr.collection.status = CollectionStatus::DownloadingMods;
+    mgr.inst.collection->status = CollectionStatus::DownloadingMods;
 }
 
 void UpdateInstallCollectionMods(ModMgr &mgr)
@@ -391,97 +417,54 @@ void UpdateInstallCollectionMods(ModMgr &mgr)
     {
         return;
     }
-    mgr.collection.installingCurrentMod.clear();
-    int nextMod = mgr.collection.installIndex + 1;
-    if (nextMod >= mgr.collection.bundleDefinition["mods"].size())
+    mgr.inst.collection->installingCurrentMod.clear();
+    int nextMod = mgr.inst.collection->installIndex + 1;
+    if (nextMod >= mgr.inst.collection->bundleDefinition["mods"].size())
     {
-        mgr.collection.installIndex = -1;
-        if (mgr.collection.error)
+        mgr.inst.collection->installIndex = -1;
+        if (mgr.inst.collection->error)
         {
-            mgr.collection.status = CollectionStatus::InstallWaitingFailedMods;
+            mgr.inst.collection->status = CollectionStatus::InstallWaitingFailedMods;
         }
         else
         {
-            mgr.collection.status = CollectionStatus::ConfigureLoadOrder;
+            mgr.inst.collection->status = CollectionStatus::ConfigureLoadOrder;
         }
         return;
     }
-    ++mgr.collection.installIndex;
-    auto modInfo = mgr.collection.bundleDefinition["mods"][nextMod];
+    ++mgr.inst.collection->installIndex;
+    auto modInfo = mgr.inst.collection->bundleDefinition["mods"][nextMod];
 
-    int modId = modInfo["source"]["modId"].get<int>();
-    int fileId = modInfo["source"]["fileId"].get<int>();
+    std::string lname = modInfo["source"]["logicalFilename"].get<std::string>();
 
-    auto it = std::find_if(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const &m) {
-        return m.modId == modId && m.fileId == fileId;
-    });
+    auto it = std::find_if(mgr.inst.modFileManifests.begin(), mgr.inst.modFileManifests.end(), [&](std::pair<ModId, ModManifest> const & m){ return m.second.logicalName == lname; });
 
-    if (it != mgr.inst.mods.end())
+    if (it == mgr.inst.modFileManifests.end())
     {
-        std::cout << "Skipping installed mod: " << modInfo["name"].get<std::string>() << std::endl;
+        // should not happen
+        std::cout << "Unable to find mod" << lname << std::endl;
         return;
     }
-
-    mgr.collection.installingCurrentMod = modInfo["name"].get<std::string>();
-    std::cout << "Intalling mod: " << mgr.collection.installingCurrentMod << std::endl;
-
-    std::optional<ManualInstallConfig> manualConfig;
-    std::optional<FomodAuto::Config> fomodConfig;
-    bool confGood = true;
-    if (modInfo.contains("choices"))
+    if (it->second.installInstances.size() != 0)
     {
-        fomodConfig = FomodAuto::Config();
-        try
+        auto modInstall = GetModInstall(mgr, it->second.installInstances[0]);
+        if (modInstall)
         {
-            for (auto &&step : modInfo["choices"]["options"])
-            {
-                auto &stepData = fomodConfig->steps.emplace_back();
-                stepData.name = step["name"].get<std::string>();
-                for (auto &&group : step["groups"])
-                {
-                    auto &groupData = stepData.groups.emplace_back();
-                    groupData.name = group["name"].get<std::string>();
-                    for (auto &&choice : group["choices"])
-                    {
-                        auto &choiceData = groupData.choices.emplace_back();
-                        choiceData.index = choice["idx"].get<int>();
-                        choiceData.name = choice["name"].get<std::string>();
-                    }
-                }
-            }
-        }
-        catch (...)
-        {
-            confGood = false;
-            mgr.collection.installErrorInfo.emplace_back(modInfo["name"].get<std::string>());
-        }
-    }
-    else if (modInfo.contains("hashes"))
-    {
-        manualConfig = ManualInstallConfig();
-        for (auto&& item : modInfo["hashes"])
-        {
-            auto& m = manualConfig->paths.emplace_back();
-            m.md5 = item["md5"].get<std::string>();
-            m.path = item["path"].get<std::string>();
+            std::cout << "Skipping installed mod: " << modInfo["name"].get<std::string>() << std::endl;
+            return;
         }
     }
 
+    mgr.inst.collection->installingCurrentMod = modInfo["name"].get<std::string>();
+    std::cout << "Intalling mod: " << mgr.inst.collection->installingCurrentMod << std::endl;
 
-    if (confGood)
-    {
-        InstallDownloadedFile(mgr, fileId, modId, fomodConfig, manualConfig);
-    }
-    else
-    {
-        std::cout << "Failed to load fomod configuration for " << it->modFile << std::endl;
-    }
+    InstallMod(mgr, it->first, mgr.inst.collection->url);
 }
 
 struct ModDepNode
 {
     intrusive::dg_inject<ModDepNode> dg;
-    ModFileRef mod;
+    ModInstallId mod;
     std::string name;
 };
 
@@ -501,12 +484,11 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
         intrusive::directed_graph<ModDepNode, &ModDepNode::dg> dg;
         std::vector<std::unique_ptr<intrusive::dg_edge<ModDepNode>>> edges;
 
-        for (auto &&mod : mgr.inst.mods)
+        for (auto &&mod : mgr.inst.modInstalls)
         {
             ModDepNode &dn = nodes.emplace_back();
-            dn.name = mod.modFile;
-            dn.mod.fileId = mod.fileId;
-            dn.mod.modId = mod.modId;
+            dn.name = mod.second.name;
+            dn.mod = mod.first;
         }
 
         for (auto&& node : nodes)
@@ -514,7 +496,7 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
             dg.add(&node);
         }
 
-        for (auto &&rule : mgr.collection.bundleDefinition["modRules"])
+        for (auto &&rule : mgr.inst.collection->bundleDefinition["modRules"])
         {
             std::string type = rule["type"];
             if (type == "conflicts")
@@ -598,7 +580,7 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
         if (!r)
         {
             std::cout << "Failed to sort load order" << std::endl;
-            mgr.collection.error = true;
+            mgr.inst.collection->error = true;
             return;
         }
         else
@@ -607,13 +589,10 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
             ModDepNode* n = list.head;
             while (n)
             {
-                auto mit = std::find_if(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const & mi) {
-                    return mi.modFile == n->name;
-                });
-                if (mit != mgr.inst.mods.end())
+                auto mii = mgr.inst.modInstalls.find(n->mod);
+                if (mii != mgr.inst.modInstalls.end())
                 {
-                    mit->loadIndex = i;
-                    ++i;
+                    mii->second.loadIndex = i;
                 }
                 else
                 {
@@ -627,7 +606,7 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
     // plugins
 
     int p = 0;
-    for (auto&& plugin : mgr.collection.bundleDefinition["plugins"])
+    for (auto&& plugin : mgr.inst.collection->bundleDefinition["plugins"])
     {
         std::string pluginName = plugin["name"].get<std::string>();
         bool enabled = plugin["enabled"].get<bool>();
@@ -644,14 +623,14 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
 
     // sort plugins
 
-    if (mgr.collection.bundleDefinition.contains("pluginRules"))
+    if (mgr.inst.collection->bundleDefinition.contains("pluginRules"))
     {
         std::unordered_map<std::string, std::unique_ptr<PluginDepNode>> pluginNodes;
         std::unordered_map<std::string, std::vector<std::string>> pluginGroups;
         std::vector<std::unique_ptr<intrusive::dg_edge<PluginDepNode>>> edges;
         intrusive::directed_graph<PluginDepNode, &PluginDepNode::dg> dg;
 
-        for (auto&& pluginRule : mgr.collection.bundleDefinition["pluginRules"]["plugins"])
+        for (auto&& pluginRule : mgr.inst.collection->bundleDefinition["pluginRules"]["plugins"])
         {
             std::unique_ptr<PluginDepNode> node = std::make_unique<PluginDepNode>();
             std::string name = pluginRule["name"].get<std::string>();
@@ -677,7 +656,7 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
             pluginNodes.emplace(name, std::move(node));
         }
 
-        for (auto&& plugin : mgr.collection.bundleDefinition["plugins"])
+        for (auto&& plugin : mgr.inst.collection->bundleDefinition["plugins"])
         {
             std::string pname = plugin["name"].get<std::string>();
             pname = NormalizePath(pname);
@@ -697,7 +676,7 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
             dg.add(node.second.get());
         }
 
-        for (auto&& pluginRule : mgr.collection.bundleDefinition["pluginRules"]["plugins"])
+        for (auto&& pluginRule : mgr.inst.collection->bundleDefinition["pluginRules"]["plugins"])
         {
             std::string pluginName = pluginRule["name"].get<std::string>();
             pluginName = NormalizePath(pluginName);
@@ -773,7 +752,7 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
             }
         };
 
-        for (auto&& groupRule : mgr.collection.bundleDefinition["pluginRules"]["groups"])
+        for (auto&& groupRule : mgr.inst.collection->bundleDefinition["pluginRules"]["groups"])
         {
             std::string groupName = groupRule["name"];
             // doesnt look like there's a before
@@ -795,7 +774,7 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
         if (!r)
         {
             std::cout << "Failed to sort plugins" << std::endl;
-            mgr.collection.error = true;
+            mgr.inst.collection->error = true;
             return;
         }
         else
@@ -835,6 +814,6 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
     }
     
 
-    mgr.collection.status = CollectionStatus::Installed;
+    mgr.inst.collection->status = CollectionStatus::Installed;
 
 }

@@ -7,17 +7,15 @@
 #include "asyncproc.h"
 #include "nxmurl.h"
 #include "modmgr_collection.h"
+#include "fomodauto.h"
+#include "enums.h"
+#include "mod.h"
 
 #include <vector>
 #include <string>
 #include <filesystem>
 #include <curl/curl.h>
-
-struct ModFileRef
-{
-    int modId = 0;
-    int fileId = 0;
-};
+#include <future>
 
 struct ModMgrConfig
 {
@@ -62,26 +60,6 @@ struct ModExec
     bool updatePluginList = false;
 };
 
-enum class ModInstallType
-{
-    Data,
-    Root,
-    Undetermined,
-    Conflicting
-};
-
-struct ModInfo
-{
-    bool enabled = false;
-    int loadIndex = -1;
-    int modId = -1;
-    int fileId = -1;
-    std::string modFile;
-    std::string lName;
-    std::string hName;
-    std::vector<std::string> plugins;
-};
-
 struct ModPlugin
 {
     std::string pluginName;
@@ -94,39 +72,26 @@ struct CustomVariable
     std::string value;
 };
 
-struct ModDownload
-{
-    std::string fileName;
-    int modId;
-    int fileId;
-    std::string game;
-    std::string installType;
-    std::string hFileName;
-};
-
 struct ModMgrInst
 {
     static constexpr int VERSION = 2;
 
     int version = 0;
-    std::vector<ModInfo> mods;
     std::vector<ModExec> customExec;
     std::vector<ModExec> builtinExec;
     std::vector<ModPlugin> pluginList;
     std::vector<CustomVariable> customVariables;
-    std::vector<ModDownload> downloads;
-    NxmCollectionUrl collection;
-};
+    std::vector<NxmCollectionUrl> collections;
 
-enum class ModDlState
-{
-    None = 0,
-    UrlQuery,
-    ModDownload,
-    ModPaused,
-    Error,
-    Complete,
-    Canceled,
+    std::unordered_map<ModId, ModManifest> modFileManifests;
+    std::unordered_map<ModInstallId, ModInstall> modInstalls;
+    //std::unordered_map<ModId, ModDownload> modFileDownloads;
+    //std::unordered_map<NxmCollectionUrl, NxmCollection> collections;
+    std::optional<NxmCollection> collection;
+
+    std::vector<ModDownload> downloads;
+
+    int idCounter = 0;
 };
 
 struct ModDownloadRt
@@ -136,14 +101,14 @@ struct ModDownloadRt
     std::filesystem::path outFile;
     std::string game;
     std::string fileName;
-    std::string hName;
     int modId;
     int fileId;
     std::string expires;
     std::string key;
     //std::string userId;
     ModDlState state = ModDlState::None;
-    ModInstallType installType = ModInstallType::Data;
+    
+    ModId id;
 
     // imgui action cache
     bool remove = false;
@@ -152,21 +117,20 @@ struct ModDownloadRt
     bool unpause = false;
 };
 
+struct NewModInfo
+{
+
+};
+
 struct ModMgr
 {
     ModMgrConfig config;
     ModMgrInst inst;
 
-    // current process running inside the overlay
-    int procId = -1;
-
     bool verbose = false;
 
-    ModInfo newMod;
     CustomVariable newVariable;
     ModExec newExec;
-
-    NxmCollection collection;
 
     //////// ImGui state cache ////////
 
@@ -187,6 +151,8 @@ struct ModMgr
     std::string modSearch;
     std::string dlSearch;
 
+    ModManifest newMod;
+
     NxmCollectionUrl inputCollection;
 
     std::optional<FomodUI> fomodState;
@@ -204,69 +170,17 @@ struct ModMgr
 
 };
 
-namespace FomodAuto
-{
-    struct Choice
-    {
-        std::string name;
-        int index = -1;
-    };
 
-    struct Group
-    {
-        std::string name;
-        std::vector<Choice> choices;
-        Choice* GetChoice(std::string const & name)
-        {
-            auto it = std::find_if(choices.begin(), choices.end(), [&](Choice const & s) { return s.name == name; });
-            if (it == choices.end())
-            {
-                return nullptr;
-            }
-            return &(*it);
-        }
-    };
+std::vector<ModId> GetModList(ModMgr& mgr);
+std::optional<ModManifest> GetModManifest(ModMgr& mgr, ModId id);
+ModId CreateModManifest(ModMgr& mgr, ModManifest const & mft);
+ModId FindModManifest(ModMgr& mgr, ModManifest const & mft);
+//ModDownload StartModDownload(ModMgr& mgr, ModId id);
+std::vector<ModInstallId> GetModInstalls(ModMgr& mgr);
+std::optional<ModInstall> GetModInstall(ModMgr& mgr, ModInstallId);
+//ModInstallId CreateEmptyInstall(ModMgr& mgr, std::string const & name);
+void SetInstallIndex(ModMgr& mgr, ModInstallId id, int index);
 
-    struct Step
-    {
-        std::string name;
-        std::vector<Group> groups;
-        Group* GetGroup(std::string const & name)
-        {
-            auto it = std::find_if(groups.begin(), groups.end(), [&](Group const & s) { return s.name == name; });
-            if (it == groups.end())
-            {
-                return nullptr;
-            }
-            return &(*it);
-        }
-    };
-
-    struct Config
-    {
-        std::vector<Step> steps;
-        Step * GetStep(std::string const & name)
-        {
-            auto it = std::find_if(steps.begin(), steps.end(), [&](Step const & s) { return s.name == name; });
-            if (it == steps.end())
-            {
-                return nullptr;
-            }
-            return &(*it);
-        }
-    };
-
-}
-
-struct ManualInstallFile
-{
-    std::string path;
-    std::string md5;
-};
-struct ManualInstallConfig
-{
-    std::vector<ManualInstallFile> paths;
-};
 
 struct ExecToolProgram : public ProcInvoke
 {
@@ -286,6 +200,9 @@ void CorrectLoadIndexes(ModMgr& mgr);
 bool LoadModMgr(ModMgr& mgr, std::string const& filePath, bool createNew);
 
 
+CurlTask CreateNxmApiQuery(ModMgr& mgr, std::string const & url, std::function<void(CurlEasyTaskResult&)> cb);
+CurlTask CreateNxmGqlQuery(ModMgr& mgr, std::string const& query, std::string const & opName, nlohmann::json const & params, std::function<void(CurlEasyTaskResult &)> cb);
+
 bool SetupPreMountEnv();
 bool InvokeTool(ModMgr& mgr, std::string const & toolName);
 bool InvokeProcess(ModMgr& mgr, std::vector<std::string> & args);
@@ -302,15 +219,15 @@ void CheckNXMAction(ModMgr& mgr);
 void SetupNXMActionPipe(ModMgr& mgr);
 void CleanupNXMAction(ModMgr& mgr);
 void HandleNXMUrl(ModMgr& mgr, std::string const & urlStr);
-void StartNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url, std::string const & name = "", ModInstallType type = ModInstallType::Data);
+void InitializeNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url, std::optional<std::string> name, ModInstallType installType);
+void InitializeNXMModDownload2(ModMgr& mgr, ModId id);
 void StartNXMCollectionInstall(ModMgr& mgr, NxmCollectionUrl const & url);
 
 void UpdateDownloads(ModMgr& mgr);
 
-void DeleteMod(ModMgr& mgr, std::string & modFile);
+void DeleteMod(ModMgr& mgr, ModId id);
 
-void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<FomodAuto::Config> const & confFomod, std::optional<ManualInstallConfig> const & confManual);
-void InstallDownloadedFile(ModMgr& mgr, std::string const & modName);
+void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collection);
 
 void InitMgr(ModMgr& mgr);
 void CleanupMgr(ModMgr& mgr);

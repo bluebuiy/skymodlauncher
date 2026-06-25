@@ -70,6 +70,7 @@ target_sources(skymodlaunch
         src/main.cpp
         src/modmgr.h
         src/modmgr.cpp
+        src/modmgr2.cpp
         src/modmgr_ui.cpp
         src/modmgr_json.cpp
         src/modmgr_json.h

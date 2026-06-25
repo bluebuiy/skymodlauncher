@@ -15,8 +15,11 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <regex>
+#include <sstream>
 
 #include "curlwrap.h"
+
+constexpr char NXM_GQL_ENDPOINT[] = "https://api.nexusmods.com/v2/graphql";
 
 bool WritePluginsTxt(ModMgr& mgr, std::filesystem::path const & path)
 {
@@ -70,15 +73,21 @@ void __attribute__((optimize("O0"))) DiscoverPlugins(ModMgr& mgr)
 
     std::filesystem::path modsRoot(mgr.config.modFolder);
     std::vector<std::filesystem::path> searchPaths;
-    searchPaths.emplace_back(mgr.config.projectDir / "overwrite");
-    for (auto&& modDir : mgr.inst.mods)
+    
+    std::filesystem::path upperData = mgr.config.projectDir / "overwrite" / "Data";
+    if (std::filesystem::is_directory(upperData))
     {
-        if (modDir.enabled)
+        searchPaths.emplace_back(upperData);
+    }
+
+    for (auto&& modInstall : mgr.inst.modInstalls)
+    {
+        if (modInstall.second.enabled)
         {
-            auto p = modsRoot / modDir.modFile / "Data";
+            auto p = modsRoot / modInstall.second.installDir / "Data";
             if (std::filesystem::is_directory(p))
             {
-                searchPaths.emplace_back(modsRoot / modDir.modFile / "Data");
+                searchPaths.emplace_back(p);
             }
         }
     }
@@ -126,25 +135,18 @@ void __attribute__((optimize("O0"))) DiscoverPlugins(ModMgr& mgr)
 ModDownload MdFromRt(ModDownloadRt const & mdrt)
 {
     ModDownload ret;
-    ret.hFileName = mdrt.hName;
     ret.fileName = mdrt.fileName;
-    ret.fileId = mdrt.fileId;
-    ret.modId = mdrt.modId;
-    ret.game = mdrt.game;
-    ret.installType = (mdrt.installType == ModInstallType::Data ? "data" : "root");
+    ret.state = mdrt.state;
+    ret.modInstance = mdrt.id;
     return ret;
 }
 
 ModDownloadRt MdrtFromMd(ModDownload const & md)
 {
     ModDownloadRt ret;
-    ret.hName = md.hFileName;
-    ret.fileName = std::move(md.fileName);
-    ret.fileId = md.fileId;
-    ret.modId = md.modId;
-    ret.game = std::move(md.game);
-    ret.state = ModDlState::Complete;
-    ret.installType = (md.installType == "root" ? ModInstallType::Root : ModInstallType::Data);
+    ret.fileName = md.fileName;
+    ret.id = md.modInstance;
+    ret.state = md.state;
     return ret;
 }
 
@@ -239,10 +241,25 @@ void LoadBuiltinTools(ModMgr& mgr)
 
 void CorrectLoadIndexes(ModMgr& mgr)
 {
-    std::sort(mgr.inst.mods.begin(), mgr.inst.mods.end(), [](ModInfo const & a, ModInfo const & b){return a.loadIndex < b.loadIndex;});
-    for (int i = 0; i < mgr.inst.mods.size(); ++i)
+    std::vector<std::tuple<ModInstallId, int>> installs;
+    auto insts = GetModInstalls(mgr);
+
+    for (auto inst : insts)
     {
-        mgr.inst.mods[i].loadIndex = i;
+        auto install = GetModInstall(mgr, inst);
+        if (install)
+        {
+            installs.push_back(std::make_tuple(inst, install->loadIndex));
+        }
+    }
+
+    std::sort(installs.begin(), installs.end(), [](std::tuple<ModInstallId, int> const & a, std::tuple<ModInstallId, int> const & b) {
+        return std::get<1>(a) < std::get<1>(b);
+    });
+
+    for (int i = 0; i < installs.size(); ++i)
+    {
+        SetInstallIndex(mgr, std::get<0>(installs[i]), i);
     }
 }
 
@@ -272,7 +289,7 @@ bool LoadModMgr(ModMgr& mgr, std::string const& filePath, bool createNew)
                 return false;
             }
             nlohmann::json obj;
-            obj << file;
+            file >> obj;
             file.close();
             mgr.config = obj.get<ModMgrConfig>();
             mgr.config.configPath = filePath;
@@ -322,7 +339,7 @@ bool LoadModMgr(ModMgr& mgr, std::string const& filePath, bool createNew)
                 exit(1);
             }
             nlohmann::json obj;
-            obj << file;
+            file >> obj;
             file.close();
             mgr.inst = obj.get<ModMgrInst>();
             if (mgr.inst.version != ModMgrInst::VERSION)
@@ -733,6 +750,7 @@ struct ModUrlFinished
     ModMgr* mgr = nullptr;
     int fileId = 0;
     int modId = 0;
+    ModId manifestId;
 
     void operator()(CurlEasyTaskResult& result)
     {
@@ -752,17 +770,9 @@ struct ModUrlFinished
         }
 
         std::string dlUrl = GetDownloadUrl(result.data);
-        std::string modName = GetModNameFromDownloadUrl(dlUrl);
-        if (modName == "")
-        {
-            timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            modName = std::format("unknown-mod-{}-{}", ts.tv_sec, ts.tv_nsec / 100000);
-        }
 
         auto& dlState = *it;
-        dlState.fileName = modName;
-        dlState.outFile = mgr->config.projectDir / "download" / modName;
+        dlState.outFile = mgr->config.projectDir / "download" / it->fileName;
 
         std::filesystem::create_directories(dlState.outFile.parent_path());
 
@@ -881,67 +891,122 @@ void HandleNXMUrl(ModMgr& mgr, std::string const & urlStr)
         curl_free(queryPart);
         fileUrl.key = extractQueryValue(query, "key=");
         fileUrl.expires = extractQueryValue(query, "expires=");
-        StartNXMModDownload(mgr, fileUrl);
+
+        InitializeNXMModDownload(mgr, fileUrl, {}, ModInstallType::Undetermined);
     }
 }
 
-void StartNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url, std::string const & name, ModInstallType type)
+void InitializeNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url, std::optional<std::string> name, ModInstallType installType)
 {
-    if (mgr.config.nexusApiKey.empty())
-    {
-        std::cout << "Nexus api key missing" << std::endl;
-        return;
-    }
+    std::string queryUrl = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}.json", url.game, url.modId, url.fileId);
+    auto metadataQuery = CreateNxmApiQuery(mgr, queryUrl, [mgr = &mgr, url, name](CurlEasyTaskResult& result) {
+        if (result.canceled || result.cError != CURLE_OK || result.httpCode != 200)
+        {
+            return;
+        }
 
-    ModDownloadRt dl;
+        nlohmann::json payload = nlohmann::json::parse(result.data, nullptr, false);
+        if (payload.is_discarded())
+        {
+            return;
+        }
 
-    dl.key = url.key;
-    dl.expires = url.expires;
-    dl.modId = url.modId;
-    dl.fileId = url.fileId;
-    dl.game = url.game;
-    dl.hName = name;
-    dl.installType = type;
+        auto lName = payload["name"].get<std::string>();
 
-    // check if the file is already in the download list
-    auto dupIt = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & dlr)
-    {
-        return dlr.modId == dl.modId && dlr.fileId == dl.fileId;
+        ModManifest manifest;
+        manifest.sourceType = FileSource::Nexus;
+        manifest.logicalName = lName;
+        manifest.name = name ? *name : "";
+        manifest.nxmFileId = url.fileId;
+        manifest.nxmModId = url.modId;
+        manifest.nxmDomain = url.game;
+        manifest.installType = ModInstallType::Undetermined;
+
+        auto mmid = CreateModManifest(*mgr, manifest);
+
+        auto dl = std::find_if(mgr->downloadSessions.begin(), mgr->downloadSessions.end(), [&](ModDownloadRt const & dl) {
+            return dl.id == mmid;
+        });
+
+        if (dl != mgr->downloadSessions.end())
+        {
+            std::cout << "Mod already in downloads";
+            return;
+        }
+
+        ModUrlFinished taskFinished;
+        taskFinished.mgr = mgr;
+        taskFinished.fileId = url.fileId;
+        taskFinished.modId = url.modId;
+        taskFinished.manifestId = mmid;
+
+        std::string dlInfo;
+        if (!url.expires.empty() && !url.key.empty())
+        {
+            dlInfo = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}/download_link.json?key={}&expires={}", url.game, url.modId, url.fileId, url.key, url.expires);
+        }
+        else
+        {
+            dlInfo = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}/download_link.json", url.game, url.modId, url.fileId);
+        }
+
+        auto task = CreateNxmApiQuery(*mgr, dlInfo, taskFinished);
+
+        ModDownloadRt dlInst;
+        dlInst.key = url.key;
+        dlInst.expires = url.expires;
+        dlInst.modId = url.modId;
+        dlInst.fileId = url.fileId;
+        dlInst.game = url.game;
+        dlInst.id = mmid;
+        dlInst.task = task;
+        dlInst.fileName = payload["file_name"].get<std::string>();
+
+        mgr->downloadSessions.emplace_back(std::move(dlInst));
+        
+        task.Start(mgr->curlEngine);
+
     });
-    if (dupIt != mgr.downloadSessions.end())
+
+    metadataQuery.Start(mgr.curlEngine);
+}
+
+void InitializeNXMModDownload2(ModMgr& mgr, ModId id)
+{
+    auto mf = GetModManifest(mgr, id);
+    if (!mf)
     {
-        std::cout << "Detected duplicate mod" << std::endl;
+        return;
+    }
+    auto dl = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & dl) {
+        return dl.id == id;
+    });
+    if (dl != mgr.downloadSessions.end())
+    {
+        std::cout << "Mod already in downloads";
         return;
     }
 
-    // these callbacks are on the main thread, because that's where we put the processor's update.
     ModUrlFinished taskFinished;
     taskFinished.mgr = &mgr;
-    taskFinished.fileId = dl.fileId;
-    taskFinished.modId = dl.modId;
-    auto task = CreateTask<CurlEasyTask>(taskFinished);
+    taskFinished.fileId = mf->nxmFileId;
+    taskFinished.modId = mf->nxmModId;
+    taskFinished.manifestId = id;
 
-    std::string dlInfoUrl;
-    if (dl.expires.empty() || dl.key.empty())
-    {
-        dlInfoUrl = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}/download_link.json", dl.game, dl.modId, dl.fileId);
-    }
-    else
-    {
-        dlInfoUrl = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}/download_link.json?key={}&expires={}", dl.game, dl.modId, dl.fileId, dl.key, dl.expires);
-    }
-    task.task->SetUrl(dlInfoUrl.c_str());
+    std::string dlInfo = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}/download_link.json", mf->nxmDomain, mf->nxmModId, mf->nxmFileId);
 
-    task.task->SetHeader("apikey", mgr.config.nexusApiKey);
-    task.task->SetHeader("accept", "application/json");
+    auto task = CreateNxmApiQuery(mgr, dlInfo, taskFinished);
 
-    dl.state = ModDlState::UrlQuery;
+    ModDownloadRt dlInst;
+    dlInst.id = id;
+    dlInst.modId = mf->nxmModId;
+    dlInst.fileId = mf->nxmFileId;
+    dlInst.game = mf->nxmDomain;
+    dlInst.fileName = mf->logicalName;
+    dlInst.task = task;
 
-    task.Start(mgr.curlEngine);
-
-    mgr.downloadSessions.emplace_back(std::move(dl));
+    mgr.downloadSessions.emplace_back(std::move(dlInst));
 }
-
 
 void UpdateDownloads(ModMgr& mgr)
 {
@@ -974,6 +1039,33 @@ void UpdateDownloads(ModMgr& mgr)
         std::error_code rmErr;
         std::filesystem::remove(f, rmErr);
         mgr.downloadSessions.erase(mgr.downloadSessions.begin() + rm);
+    }
+
+    // this is a little jank but i need to control the concurrent download tasks, and I didnt want to do it at the curl level. and the way the async engine is set up 
+    // makes it difficult to do there.
+    int c = 0;
+    for (auto && t : mgr.downloadSessions)
+    {
+        if (!(t.state == ModDlState::Canceled || t.state == ModDlState::Complete || t.state == ModDlState::Error || t.state == ModDlState::None))
+        {
+            ++c;
+        }
+    }
+    if (c < 4)
+    {
+        for (auto&& t : mgr.downloadSessions)
+        {
+            if (t.state == ModDlState::None)
+            {
+                t.state = ModDlState::UrlQuery;
+                t.task.Start(mgr.curlEngine);
+                ++c;
+            }
+            if (c >= 4)
+            {
+                break;
+            }
+        }
     }
 
     mgr.curlEngine->Update();
@@ -1258,31 +1350,60 @@ std::string InstallTypeStr(ModInstallType t)
     return "Unknown!";
 }
 
-void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<FomodAuto::Config> const & confFomod, std::optional<ManualInstallConfig> const & confManual)
+void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collection)
 {
-    if (mgr.cookingInstall.has_value())
+    auto manifest = GetModManifest(mgr, id);
+    if (!manifest)
     {
         return;
     }
 
-    auto dl = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & dlr)
-    {
-        return dlr.modId == modId && dlr.fileId == fileId;
-    });
-
-    // already installed, skip
-    if (dl == mgr.downloadSessions.end())
+    // for now only one mod install allowed
+    if (manifest->installInstances.size() > 0)
     {
         return;
     }
-    
-    std::string fileStem = std::filesystem::path(dl->fileName).stem();
 
-    std::string modFileName = std::format("{}-{}", modId, fileId);
-    std::filesystem::path staging = mgr.config.projectDir / ".mod_staging";
-    std::filesystem::path inFile = mgr.config.projectDir / "download" / dl->fileName;
+    std::filesystem::path staging;
+    std::filesystem::path archive;
+    // modFileName needs to be fixed for multi install?
+    std::string modFileName;
 
-    auto task = UnzipFile(inFile, staging / fileStem, [mgr = &mgr, staging, fileStem, modFileName, confCapFomod = confFomod, confCapManual = confManual, fileId, modId](bool succeeded) {
+    if (manifest->sourceType == FileSource::Nexus)
+    {
+        auto dl = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & rt) {
+            return rt.id == id;
+        });
+        if (dl == mgr.downloadSessions.end())
+        {
+            return;
+        }
+
+        std::string stem = std::filesystem::path(dl->fileName).stem();
+        modFileName = std::format("{}-{}", manifest->nxmModId, manifest->nxmFileId);
+        staging = mgr.config.projectDir / ".mod_staging" / stem;
+        archive = mgr.config.projectDir / "download" / dl->fileName;
+
+    }
+    else if (manifest->sourceType == FileSource::Independent)
+    {
+
+    }
+    else if (manifest->sourceType == FileSource::Manual)
+    {
+
+    }
+    else if (manifest->sourceType == FileSource::CollectionBundle)
+    {
+        staging = mgr.config.projectDir / ".mod_staging" / std::format("{}-{}", manifest->nxmColSlug, manifest->nxmColRev) / "bundled" / manifest->nxmColBundleFile;
+        modFileName = std::format("{}-{}-{}", manifest->nxmColSlug, manifest->nxmColRev, manifest->nxmColBundleFile);
+        if (!std::filesystem::is_directory(staging))
+        {
+            return;
+        }
+    }
+
+    std::function<void(bool)> installAction = [mgr = &mgr, staging, modFileName, id, collection, manifest](bool succeeded){
         if (!succeeded)
         {
             mgr->cookingInstall.reset();
@@ -1290,24 +1411,80 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
         }
 
         std::filesystem::path modFolder = *WordExpand(mgr->config.modFolder);
-        std::filesystem::create_directories(modFolder / modFileName);
         std::filesystem::path installDest = modFolder / modFileName;
-
-        auto dl = std::find_if(mgr->downloadSessions.begin(), mgr->downloadSessions.end(), [&](ModDownloadRt const & dlr)
-        {
-            return dlr.modId == modId && dlr.fileId == fileId;
-        });
+        std::filesystem::create_directories(installDest);
 
         std::filesystem::path fomodPath;
         std::filesystem::path realModRoot;
-        bool isFomod = confCapFomod.has_value() && FindFomod(staging / fileStem, fomodPath, realModRoot);
 
-        if (confCapManual.has_value())
+        std::optional<ManualInstallConfig> manualConfig;
+        std::optional<FomodAuto::Config> fomodConfig;
+
+        bool confGood = true;
+        bool isFomod = false;
+        
+        if (mgr->inst.collection)
+        {
+            // this is not optimal but whatever
+            for (auto&& md : mgr->inst.collection->bundleDefinition["mods"])
+            {
+                if (md["source"]["logicalFilename"].get<std::string>() == manifest->logicalName)
+                {
+                    if (md.contains("choices"))
+                    {
+                        fomodConfig = FomodAuto::Config();
+                        try
+                        {
+                            for (auto &&step : md["choices"]["options"])
+                            {
+                                auto &stepData = fomodConfig->steps.emplace_back();
+                                stepData.name = step["name"].get<std::string>();
+                                for (auto &&group : step["groups"])
+                                {
+                                    auto &groupData = stepData.groups.emplace_back();
+                                    groupData.name = group["name"].get<std::string>();
+                                    for (auto &&choice : group["choices"])
+                                    {
+                                        auto &choiceData = groupData.choices.emplace_back();
+                                        choiceData.index = choice["idx"].get<int>();
+                                        choiceData.name = choice["name"].get<std::string>();
+                                    }
+                                }
+                            }
+                        }
+                        catch (...)
+                        {
+                            confGood = false;
+                            //mgr.collection.installErrorInfo.emplace_back(modInfo["name"].get<std::string>());
+                        }
+                    }
+                    else if (md.contains("hashes"))
+                    {
+                        manualConfig = ManualInstallConfig();
+                        for (auto&& item : md["hashes"])
+                        {
+                            auto& m = manualConfig->paths.emplace_back();
+                            m.md5 = item["md5"].get<std::string>();
+                            m.path = item["path"].get<std::string>();
+                            // there must be an optional destination field but i haven't seen it yet
+                        }
+                    }
+                    break;
+                }
+            }
+            isFomod = fomodConfig.has_value() && FindFomod(staging, fomodPath, realModRoot);
+        }
+        else
+        {
+            isFomod = FindFomod(staging, fomodPath, realModRoot);
+        }
+
+        if (manualConfig.has_value())
         {
             // To whever thought using a file hash to identify which files to use was a good idea......
 
             std::unordered_map<std::string, std::filesystem::path> hashedFiles;
-            for (auto dit = std::filesystem::recursive_directory_iterator(staging / fileStem); dit != std::filesystem::recursive_directory_iterator(); ++dit)
+            for (auto dit = std::filesystem::recursive_directory_iterator(staging); dit != std::filesystem::recursive_directory_iterator(); ++dit)
             {
                 if (dit->is_regular_file())
                 {
@@ -1323,7 +1500,7 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
 
             fomod::InstallActions install;
 
-            for (auto&& fileSpec : confCapManual->paths)
+            for (auto&& fileSpec : manualConfig->paths)
             {
                 auto it = hashedFiles.find(fileSpec.md5);
                 if (it == hashedFiles.end())
@@ -1340,41 +1517,53 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
                 }
             }
 
-            if (dl->installType == ModInstallType::Data)
+            ModInstallType usedInstallType = ModInstallType::Undetermined;
+
+            if (manifest->installType == ModInstallType::Undetermined || manifest->installType == ModInstallType::Data)
             {
                 installDest /= "Data";
+                usedInstallType = ModInstallType::Data;
             }
-            else if (dl->installType == ModInstallType::Root)
+            else if (manifest->installType == ModInstallType::Root)
             {
-                ; // noop
+                usedInstallType = ModInstallType::Data;
             }
 
-            if (ApplyFomodFileActions(*mgr, install, staging / fileStem, installDest))
+            ModInstallId installId = {++mgr->inst.idCounter};
+
+            ModInstall installInst;
+
+            installInst.name = manifest->logicalName;
+            installInst.installDir = modFileName;
+            installInst.loadIndex = mgr->inst.modInstalls.size();
+            installInst.enabled = true;
+            installInst.installType = usedInstallType;
+            installInst.modInstance = id;
+            installInst.ok = false;
+
+            auto iit = mgr->inst.modInstalls.emplace(installId, installInst);
+
+            if (ApplyFomodFileActions(*mgr, install, staging, installDest))
             {
-                auto& mod = mgr->inst.mods.emplace_back();
-                mod.enabled = true;
-                mod.loadIndex = mgr->inst.mods.size() - 1;
-                mod.modFile = modFileName;
-                mod.lName = fileStem;
-                mod.fileId = fileId;
-                mod.modId = modId;
-                mod.hName = dl->hName;
+                iit.first->second.ok = true;
             }
             else
             {
-                mgr->collection.error = true;
-                mgr->collection.installErrorInfo.push_back(fileStem);
+                //mgr->collection.error = true;
+                //mgr->collection.installErrorInfo.push_back(fileStem);
             }
         }
-        else if (isFomod)
+        else if (isFomod && collection)
         {
-            if (dl->installType == ModInstallType::Data)
+            ModInstallType usedInstallType = ModInstallType::Undetermined;
+            if (manifest->installType == ModInstallType::Data || manifest->installType == ModInstallType::Undetermined)
             {
                 installDest /= "Data";
+                usedInstallType = ModInstallType::Data;
             }
-            else if (dl->installType == ModInstallType::Root)
+            else if (manifest->installType == ModInstallType::Root)
             {
-                ; // noop
+                usedInstallType = ModInstallType::Data;
             }
 
             auto fmopt = fomod::Load(fomodPath);
@@ -1384,7 +1573,7 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
                 return;
             }
 
-            FomodAuto::Config conf = *confCapFomod;
+            FomodAuto::Config const & conf = *fomodConfig;
             fomod::Eval eval;
 
             while (true)
@@ -1398,7 +1587,7 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
                 bool visible = fomod::EvalSubstep(*fmopt, eval, ss);
                 if (visible)
                 {
-                    FomodAuto::Step* step = nullptr;
+                    FomodAuto::Step const * step = nullptr;
                     if (ss.stepName.empty())
                     {
                         if (eval.currentStep < conf.steps.size())
@@ -1408,7 +1597,6 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
                         else
                         {
                             std::cout << "Invalid fomod preset!" << std::endl;
-                            mgr->cookingInstall.reset();
                             return;
                         }
                     }
@@ -1436,8 +1624,8 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
                     if (!applied)
                     {
                         std::cout << "Invalid fomod preset!" << std::endl;
-                        mgr->collection.installErrorInfo.push_back(dl->fileName);
                         mgr->cookingInstall.reset();
+                        //mgr->collection.installErrorInfo.push_back(dl->fileName);
                         return;
                     }
                 }
@@ -1451,6 +1639,20 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
             // TODO check file status?
             auto actions = fomod::GetInstallActions(*fmopt, eval, ss);
 
+            ModInstallId installId = {++mgr->inst.idCounter};
+
+            ModInstall installInst;
+
+            installInst.name = manifest->logicalName;
+            installInst.installDir = modFileName;
+            installInst.loadIndex = mgr->inst.modInstalls.size();
+            installInst.enabled = true;
+            installInst.installType = usedInstallType;
+            installInst.modInstance = id;
+            installInst.ok = false;
+
+            auto iit = mgr->inst.modInstalls.emplace(installId, installInst);
+
             // perform file actions
             if (ApplyFomodFileActions(*mgr, actions, realModRoot, installDest))
             {
@@ -1458,63 +1660,67 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
                 auto postInstallType = GuessInstallType(installDest, _dummy);
                 if (postInstallType == ModInstallType::Conflicting)
                 {
-                    std::cout << "!!!!!!!! Mod looks like it installed incorrectly: " << dl->fileName << std::endl;
-                    mgr->collection.installErrorInfo.push_back(dl->fileName);
-                    mgr->collection.error = true;
+                    std::cout << "!!!!!!!! Mod looks like it installed incorrectly: " << manifest->logicalName << std::endl;
+                    //mgr->collection.installErrorInfo.push_back(dl->fileName);
+                }
+                else
+                {
+                    iit.first->second.ok = true;
                 }
             }
             else
             {
-                mgr->collection.error = true;
-                std::cout << "!!!!!!!! Fomod installed incorrectly, manual install required: " << dl->fileName << std::endl;
-                mgr->collection.installErrorInfo.push_back(dl->fileName);
+                
+                std::cout << "!!!!!!!! Fomod installed incorrectly, manual install required: " << manifest->logicalName << std::endl;
+                //mgr->collection.installErrorInfo.push_back(dl->fileName);
             }
-
-            // create mod entry
-            auto& mod = mgr->inst.mods.emplace_back();
-            mod.enabled = true;
-            mod.loadIndex = mgr->inst.mods.size() - 1;
-            mod.modFile = modFileName;
-            mod.lName = fileStem;
-            mod.fileId = fileId;
-            mod.modId = modId;
-            mod.hName = dl->hName;
+        }
+        else if (isFomod && !collection)
+        {
+            InitFomod(*mgr, staging, realModRoot, fomodPath, installDest, modFileName, id);
         }
         else
         {
-            ModInstallType instType = dl->installType;
+            ModInstallType instType = manifest->installType;
             std::filesystem::path guessedModRoot;
-            std::filesystem::path modRoot = staging / fileStem;
+            std::filesystem::path modRoot = staging;
 
+            // this check might be unecessary now that we look for known folders and files
             std::string rootname = modRoot.filename();
             for (std::filesystem::directory_iterator di(modRoot); di != std::filesystem::directory_iterator(); ++di)
             {
+                // if a direct child starts with the mod name then it's obviously packaged wrong, so set the real mod root to it
                 if (rootname.starts_with(di->path().filename().c_str()))
                 {
                     modRoot = di->path();
                     break;
                 }
             }
-
+            bool setNotOk = false;
             auto guessedInstallType = GuessInstallType(modRoot, guessedModRoot);
             if (guessedInstallType == ModInstallType::Undetermined)
             {
                 if (mgr->verbose)
                 {
-                    std::cout << "Unble to guess install type for " << dl->fileName << " falling back to type specified in collection: " << InstallTypeStr(dl->installType) << std::endl;
+                    std::cout << "Unble to guess install type for " << manifest->logicalName << " falling back to type specified in collection: " << InstallTypeStr(manifest->installType) << std::endl;
+                }
+                // if we cant guess it, and we havent been told what it is, then assume it's data
+                if (instType == ModInstallType::Undetermined)
+                {
+                    instType = ModInstallType::Data;
                 }
             }
             else if (guessedInstallType == ModInstallType::Conflicting)
             {
-                std::cout << "!!!!!!!! Mod " << dl->fileName << " may be packaged incorrectly, may be installed wrong!  Intalling as " << InstallTypeStr(dl->installType) << std::endl;
-                mgr->collection.installErrorInfo.push_back(dl->fileName);
-                mgr->collection.error = true;
+                std::cout << "!!!!!!!! Mod " << manifest->logicalName << " may be packaged incorrectly, may be installed wrong!  Intalling as " << InstallTypeStr(manifest->installType) << std::endl;
+                //mgr->collection.installErrorInfo.push_back(dl->fileName);
+                setNotOk = true;
             }
-            else if (guessedInstallType != dl->installType)
+            else if (guessedInstallType != manifest->installType)
             {
                 if (mgr->verbose)
                 {
-                    std::cout << "!!!!!!!! Mod's install type is " << InstallTypeStr(dl->installType) << " but looks like " << InstallTypeStr(guessedInstallType) << ", using guessed type instead" << std::endl;
+                    std::cout << "!!!!!!!! Mod's install type is " << InstallTypeStr(manifest->installType) << " but looks like " << InstallTypeStr(guessedInstallType) << ", using guessed type instead" << std::endl;
                     std::cout << "!!!!!!!! Using " << guessedModRoot << " as the true mod root" << std::endl;
                 }
                 instType = guessedInstallType;
@@ -1524,7 +1730,7 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
             {
                 if (mgr->verbose)
                 {
-                    std::cout << "!!!!!!!! Guessed mod root is different than default for mod " << dl->fileName << " at " << guessedModRoot << " with type " << InstallTypeStr(instType) << std::endl;
+                    std::cout << "!!!!!!!! Guessed mod root is different than default for mod " << manifest->logicalName << " at " << guessedModRoot << " with type " << InstallTypeStr(instType) << std::endl;
                 }
                 modRoot = guessedModRoot;
             }
@@ -1539,16 +1745,24 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
             }
 
             // otherwise create the mod entry and move mod into it
-            auto& mod = mgr->inst.mods.emplace_back();
-            mod.enabled = true;
-            mod.loadIndex = mgr->inst.mods.size() - 1;
-            mod.modFile = modFileName;
-            mod.lName = fileStem;
-            mod.fileId = fileId;
-            mod.modId = modId;
-            mod.hName = dl->hName;
+            ModInstallId installId = {++mgr->inst.idCounter};
+
+            ModInstall installInst;
+
+            installInst.name = manifest->logicalName;
+            installInst.installDir = modFileName;
+            installInst.loadIndex = mgr->inst.modInstalls.size();
+            installInst.enabled = true;
+            installInst.installType = instType;
+            installInst.modInstance = id;
+            installInst.ok = false;
+
+            auto iit = mgr->inst.modInstalls.emplace(installId, installInst);
             
-            MoveDirNormalizePaths(modRoot, installDest);
+            if (MoveDirNormalizePaths(modRoot, installDest))
+            {
+                iit.first->second.ok = true;
+            }
         }
 
         // remove staging
@@ -1556,7 +1770,7 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
             "/usr/bin/rm",
             "-f",
             "-r",
-            staging / fileStem,
+            staging,
         };
         if (!LaunchProc(rmCmd, "/"))
         {
@@ -1568,175 +1782,72 @@ void InstallDownloadedFile(ModMgr& mgr, int fileId, int modId, std::optional<Fom
         DiscoverPlugins(*mgr);
 
         SaveModMgr(*mgr);
-    });
+    };
 
-    mgr.cookingInstall = task;
-    task.Start(mgr.processEngine);
-}
-
-void InstallDownloadedFile(ModMgr& mgr, std::string const & modName)
-{
-    if (mgr.fomodState.has_value() || mgr.cookingInstall)
+    if (manifest->sourceType == FileSource::Nexus)
     {
-        return;
-    }
-
-    auto dl = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & dlr)
-    {
-        return dlr.fileName == modName;
-    });
-
-    if (dl == mgr.downloadSessions.end())
-    {
-        return;
-    }
-
-    {
-        auto im = std::find_if(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](ModInfo const & m){
-            return m.fileId == dl->fileId && m.modId == dl->modId;
+        auto dl = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & rt) {
+            return rt.id == id;
         });
-
-        if (im != mgr.inst.mods.end())
+        if (dl == mgr.downloadSessions.end())
         {
-            std::cout << "Mod already installed: " << modName << std::endl;
             return;
         }
+
+        std::string stem = std::filesystem::path(dl->fileName).stem();
+        std::string modFileName = std::format("{}-{}", manifest->nxmModId, manifest->nxmFileId);
+        std::filesystem::path staging = mgr.config.projectDir / ".mod_staging" / stem;
+        std::filesystem::path inFile = mgr.config.projectDir / "download" / dl->fileName;
+
+        auto task = UnzipFile(archive, staging, std::move(installAction));
+        mgr.cookingInstall = task;
+        task.Start(mgr.processEngine);
     }
-
-    // check filetype
-
-    // --print0 is not working
-    std::vector<std::string> args = {
-        "/usr/bin/file",
-        // "-0",
-        "-b",
-        "--mime-type",
-        std::format("{}/download/{}", *WordExpand(mgr.config.projectDir), dl->fileName)
-    };
-
-    auto out = LaunchProcForOutput(args, "/");
-    if (!out)
+    else if (manifest->sourceType == FileSource::Independent)
     {
-        std::cout << "Failed to determine file type" << std::endl;
-        return;
+
     }
-
-    std::filesystem::path staging = mgr.config.projectDir / ".mod_staging";
-    std::vector<std::string> extractCmd;
-    std::string type = *out;
-
-    std::string fileStem = std::filesystem::path(modName).stem();
-
-    if (type == "application/x-7z-compressed\n")
+    else if (manifest->sourceType == FileSource::Manual)
     {
-        // 7z creates missing directories
-        extractCmd = {
-            "/usr/bin/7z",
-            "x",
-            std::format("-o{}", std::string(staging / fileStem)),
-            mgr.config.projectDir / "download" / modName
-        };
-    }
-    else if (type == "application/zip\n")
-    {
-        // unzip creates missing directories
-        extractCmd = {
-            "/usr/bin/unzip",
-            "-d",
-            staging / fileStem,
-            mgr.config.projectDir / "download" / modName
-        };
-    }
-    else if (type == "application/x-rar\n")
-    {
-        extractCmd = {
-            "/usr/bin/unrar",
-            "x",
-            std::format("-op{}", std::string(staging / fileStem)),
-            mgr.config.projectDir / "download" / modName
-        };
-    }
-    else
-    {
-        std::cout << "Unknown file type: " << type << std::endl;
-        return;
-    }
 
-    if (!LaunchProc(extractCmd, "/"))
-    {
-        std::cout << "Failed to extract mod contents, check output above." << std::endl;
-        return;
     }
-
-    std::filesystem::path fomodPath;
-    std::filesystem::path realModRoot;
-    bool isFomod = FindFomod(staging / fileStem, fomodPath, realModRoot);
-
-    std::filesystem::path modFolder = *WordExpand(mgr.config.modFolder);
-    std::filesystem::path modFileName = std::format("{}-{}", dl->modId, dl->fileId);
-    std::filesystem::path installDest = modFolder / modFileName;
-    std::filesystem::create_directories(installDest);
-    if (dl->installType == ModInstallType::Data)
+    else if (manifest->sourceType == FileSource::CollectionBundle)
     {
-        installDest /= "Data";
+        // bundled mods are already unpacked
+        installAction(true);
     }
-    else if (dl->installType == ModInstallType::Root)
-    {
-        ; // noop
-    }
-
-    if (isFomod)
-    {
-        ModFileRef fileRef;
-        fileRef.modId = dl->modId;
-        fileRef.fileId = dl->fileId;
-        InitFomod(mgr, staging / fileStem, realModRoot, fomodPath, installDest, fileRef);
-    }
-    else
-    {
-        if (MoveDirNormalizePaths(staging / fileStem, installDest))
-        {
-            auto& mod = mgr.inst.mods.emplace_back();
-            mod.enabled = true;
-            mod.loadIndex = mgr.inst.mods.size() - 1;
-            mod.modFile = modFileName;
-            mod.lName = fileStem;
-            mod.fileId = dl->fileId;
-            mod.modId = dl->modId;
-            mod.hName = dl->hName;
-
-            // remove staging
-            std::vector<std::string> rmCmd = {
-                "/usr/bin/rm",
-                "-r",
-                staging / fileStem
-            };
-            if (!LaunchProc(rmCmd, "/"))
-            {
-                std::cout << "Failed to delete fomod tmp dir: " << staging / fileStem << std::endl;
-            }
-
-            DiscoverPlugins(mgr);
-            
-            SaveModMgr(mgr);
-        }
-    }
-
 }
 
-
-
-void DeleteMod(ModMgr& mgr, std::string & modFile)
+void DeleteMod(ModMgr& mgr, ModId id)
 {
-    std::filesystem::path path = std::filesystem::path(*WordExpand(mgr.config.modFolder)) / modFile;
-    
-    std::vector<std::string> args = {
-        "/usr/bin/rm",
-        "-f",
-        "-r",
-        path
-    };
-    LaunchProc(args, "/");
+    auto manifest = GetModManifest(mgr, id);
+
+    if (!manifest)
+    {
+        return;
+    }
+
+    if (manifest->installInstances.size() == 0)
+    {
+        return;
+    }
+
+    auto install = GetModInstall(mgr, manifest->installInstances[0]);
+    if (install)
+    {
+        std::filesystem::path path = std::filesystem::path(*WordExpand(mgr.config.modFolder)) / install->installDir;
+
+        std::vector<std::string> args = {
+            "/usr/bin/rm",
+            "-f",
+            "-r",
+            path
+        };
+        LaunchProc(args, "/");
+    }
+
+    mgr.inst.modInstalls.erase(manifest->installInstances[0]);
+    manifest->installInstances.erase(manifest->installInstances.begin());
 }
 
 void InitMgr(ModMgr& mgr)
@@ -1767,6 +1878,38 @@ void CleanupMgr(ModMgr& mgr)
     curl_global_cleanup();
 }
 
+CurlTask CreateNxmGqlQuery(ModMgr& mgr, std::string const& query, std::string const & opName, nlohmann::json const & params, std::function<void(CurlEasyTaskResult &)> cb)
+{
+    nlohmann::json payload;
+    payload["query"] = query;
+    payload["operationName"] = opName;
+    payload["variables"] = params;
 
+    auto task = CreateTask<CurlEasyTask>(std::move(cb));
 
+    std::stringstream ss;
+    ss << payload;
 
+    task.task->postDataStr = ss.str();
+    task.task->type = HttpType::Post;
+    task.task->contentType = "application/json";
+
+    if (!mgr.config.nexusApiKey.empty())
+    {
+        task.task->SetHeader("apikey", mgr.config.nexusApiKey);
+    }
+    task.task->SetUrl(NXM_GQL_ENDPOINT);
+
+    return task;
+}
+
+CurlTask CreateNxmApiQuery(ModMgr& mgr, std::string const & url, std::function<void(CurlEasyTaskResult&)> cb)
+{
+    auto task = CreateTask<CurlEasyTask>(std::move(cb));
+
+    task.task->SetUrl(url.c_str());
+    task.task->SetHeader("apikey", mgr.config.nexusApiKey);
+    task.task->SetHeader("accept", "application/json");
+
+    return task;
+}

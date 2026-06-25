@@ -114,150 +114,12 @@ bool SetupPreMountEnv()
 
 std::optional<std::vector<std::string>> BuildMountDataStr(ModMgr& mgr)
 {
-    std::string installRoot;
-    if (auto o = WordExpand(shellFix(mgr.config.installRoot)))
-    {
-        installRoot = *o;
-    }
-    else
-    {
-        std::cout << "Failed to resolve paths" << std::endl;
-        return {};
-    }
-
-    std::string overwrite;
-    if (auto o = WordExpand(shellFix(mgr.config.projectDir / "overwrite")))
-    {
-        overwrite = *o;
-    }
-    else
-    {
-        std::cout << "Failed to resolve paths" << std::endl;
-        return {};
-    }
-    std::string work;
-    if (auto o = WordExpand(shellFix(mgr.config.projectDir / "work")))
-    {
-        work = *o;
-    }
-    else
-    {
-        std::cout << "Failed to resolve paths" << std::endl;
-        return {};
-    }
-
-    std::filesystem::path modDir;
-    if (auto o = WordExpand(shellFix(mgr.config.modFolder)))
-    {
-        modDir = *o;
-    }
-    else
-    {
-        return {};
-    }
-
-    std::sort(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](auto& a, auto& b){ return a.loadIndex < b.loadIndex; });
-
-    std::vector<std::string> datas;
-
-    int modIndex = 0;
-
-    while (modIndex < mgr.inst.mods.size())
-    {
-        std::string lowerLayers;
-        lowerLayers += installRoot;
-
-        for (int i = 0; i < 64 && modIndex < mgr.inst.mods.size(); ++i, ++modIndex)
-        {
-            lowerLayers += ":";
-            int index = mgr.inst.mods.size() - modIndex - 1;
-            lowerLayers += (modDir / mgr.inst.mods[index].modFile);
-        }
-
-        std::string layers = std::format("lowerdir={},upperdir={},workdir={}", lowerLayers, overwrite, work);
-
-        datas.emplace_back(std::move(layers));
-    }
-    return datas;
+    return {};
 }
 
 std::optional<std::vector<std::vector<std::string>>> BuildMountCommands(ModMgr& mgr)
 {
-    std::string installRoot;
-    if (auto o = WordExpand(shellFix(mgr.config.installRoot)))
-    {
-        installRoot = *o;
-    }
-    else
-    {
-        std::cout << "Failed to resolve paths" << std::endl;
-        return {};
-    }
-
-    std::string overwrite;
-    if (auto o = WordExpand(shellFix(mgr.config.projectDir / "overwrite")))
-    {
-        overwrite = *o;
-    }
-    else
-    {
-        std::cout << "Failed to resolve paths" << std::endl;
-        return {};
-    }
-    std::string work;
-    if (auto o = WordExpand(shellFix(mgr.config.projectDir / "work")))
-    {
-        work = *o;
-    }
-    else
-    {
-        std::cout << "Failed to resolve paths" << std::endl;
-        return {};
-    }
-
-    std::filesystem::path modDir;
-    if (auto o = WordExpand(shellFix(mgr.config.modFolder)))
-    {
-        modDir = *o;
-    }
-    else
-    {
-        return {};
-    }
-
-    std::sort(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](auto& a, auto& b){ return a.loadIndex < b.loadIndex; });
-
-    std::vector<std::vector<std::string>> commands;
-
-    int modIndex = 0;
-
-    while (modIndex < mgr.inst.mods.size())
-    {
-        std::string lowerLayers;
-        lowerLayers += installRoot;
-
-        for (int i = 0; i < 64 && modIndex < mgr.inst.mods.size(); ++i, ++modIndex)
-        {
-            lowerLayers += ":";
-            int index = mgr.inst.mods.size() - modIndex - 1;
-            lowerLayers += (modDir / mgr.inst.mods[index].modFile);
-        }
-
-        std::string layers = std::format("lowerdir={},upperdir={},workdir={}", lowerLayers, overwrite, work);
-
-        std::vector<std::string> cmd = {
-            "/usr/bin/mount",
-            "-t", "overlay",
-            "none",
-            "-o", layers,
-            installRoot
-        };
-
-        std::cout << layers << std::endl;
-
-        commands.emplace_back(std::move(cmd));
-    }
-    return commands;
+    return {};
 }
 
 struct ToolRunner : ProcInvoke
@@ -506,21 +368,28 @@ std::optional<std::vector<MountAction>> GenerateMountActions(ModMgr& mgr)
         return {};
     }
 
-    std::sort(mgr.inst.mods.begin(), mgr.inst.mods.end(), [&](auto& a, auto& b){ return a.loadIndex < b.loadIndex; });
+    std::vector<ModInstallId> installList;
+    for (auto&& mod : mgr.inst.modInstalls)
+    {
+        installList.push_back(mod.first);
+    }
+
+    std::sort(installList.begin(), installList.end(), [&](auto& a, auto& b){ return mgr.inst.modInstalls[a].loadIndex < mgr.inst.modInstalls[b].loadIndex; });
+    
 
     std::vector<MountAction> mountActions;
 
     int modIndex = 0;
     int leafIndex = 0;
 
-    while (modIndex < mgr.inst.mods.size())
+    while (modIndex < installList.size())
     {
         auto& ma = mountActions.emplace_back();
 
-        for (int i = 0; i < 128 && modIndex < mgr.inst.mods.size(); ++i, ++modIndex)
+        for (int i = 0; i < 128 && modIndex < installList.size(); ++i, ++modIndex)
         {
-            int index = mgr.inst.mods.size() - modIndex - 1;
-            ma.lower.emplace_back(modDir / mgr.inst.mods[index].modFile);
+            int index = installList.size() - modIndex - 1;
+            ma.lower.emplace_back(modDir / mgr.inst.modInstalls[installList[index]].installDir);
         }
         
         ma.mountPoint = mgr.config.projectDir / ".fs" / std::format("m{}", leafIndex);

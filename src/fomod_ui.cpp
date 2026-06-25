@@ -14,7 +14,8 @@ bool InitFomod(
     std::filesystem::path const & realRoot,
     std::filesystem::path const & fomodConf,
     std::filesystem::path const & installDst,
-    ModFileRef const & modFile
+    std::string const & installDir,
+    ModId const & modFile
 )
 {
     if (mgr.fomodState.has_value())
@@ -26,7 +27,7 @@ bool InitFomod(
     std::filesystem::path fomdPath = fomodConf;
 
     auto downloadData = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & m){
-        return m.fileId == modFile.fileId && m.modId == modFile.modId;
+        return m.id == modFile;
     });
 
     if (downloadData == mgr.downloadSessions.end())
@@ -51,11 +52,11 @@ bool InitFomod(
     mgr.fomodState->tmpDir = tmpDir;
 
     // TODO load the info file
-    mgr.fomodState->hName = downloadData->hName;
+    mgr.fomodState->hName = downloadData->fileName;
     mgr.fomodState->name = std::filesystem::path(downloadData->fileName).stem();
     mgr.fomodState->openPopup = true;
-    mgr.fomodState->fileId = downloadData->fileId;
-    mgr.fomodState->modId = downloadData->modId;
+    mgr.fomodState->modId = modFile;
+    mgr.fomodState->installDir = installDir;
 
     return true;
 }
@@ -264,18 +265,28 @@ void RenderFomod(ModMgr& mgr)
     {
         ApplyFomodFileActions(mgr, fomod.fileActions, mgr.config.projectDir / fomod.realRoot, fomod.installPrefix);
 
+
+        auto mf = GetModManifest(mgr, mgr.fomodState->modId);
+        if (!mf)
+        {
+            std::cout << "Manifest disappeared!" << std::endl;
+        }
+
+        ModInstallId installId = {++mgr.inst.idCounter};
+
+        ModInstall installInst;
+
+        installInst.name = mf->logicalName;
+        installInst.installDir = fomod.installDir;
+        installInst.loadIndex = mgr.inst.modInstalls.size();
+        installInst.enabled = true;
+        installInst.installType = mf->installType;
+        installInst.modInstance = mgr.fomodState->modId;
+        installInst.ok = false;
+
+        mgr.inst.modInstalls.emplace(installId, installInst);
+
         DiscoverPlugins(mgr);
-
-
-        // create mod entry
-        auto& mod = mgr.inst.mods.emplace_back();
-        mod.enabled = true;
-        mod.loadIndex = mgr.inst.mods.size() - 1;
-        mod.modFile = std::format("{}-{}", fomod.modId, fomod.fileId);
-        mod.lName = fomod.name;
-        mod.fileId = fomod.fileId;
-        mod.modId = fomod.modId;
-        mod.hName = fomod.hName;
 
         // remove staging
         std::vector<std::string> rmCmd = {

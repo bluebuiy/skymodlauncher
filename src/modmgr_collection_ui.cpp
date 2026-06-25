@@ -11,7 +11,7 @@
 
 void RenderCollectionWindow(ModMgr& mgr)
 {
-    if (mgr.collection.status == CollectionStatus::None)
+    if (!mgr.inst.collection || mgr.inst.collection->status == CollectionStatus::None)
     {
         return;
     }
@@ -20,20 +20,20 @@ void RenderCollectionWindow(ModMgr& mgr)
     ImGui::SetNextWindowSize(ImVec2(500, 300), ImGuiCond_Appearing);
     if (ImGui::Begin("Collection"))
     {
-        ImGui::Text("%s", mgr.collection.info.name.c_str());
+        ImGui::Text("%s", mgr.inst.collection->info.name.c_str());
         if (ImGui::Button("Cancel"))
         {
-            mgr.collection = {};
+            mgr.inst.collection = {};
         }
-        if (mgr.collection.status == CollectionStatus::FetchingInfo)
+        if (mgr.inst.collection->status == CollectionStatus::FetchingInfo)
         {
-            if (mgr.collection.error)
+            if (mgr.inst.collection->error)
             {
-                ImGui::Text("Error loading collection info for %s:%d", mgr.collection.url.slug.c_str(), mgr.collection.url.rev);
+                ImGui::Text("Error loading collection info for %s:%d", mgr.inst.collection->url.slug.c_str(), mgr.inst.collection->url.rev);
                 if (ImGui::Button("Retry"))
                 {
-                    auto url = mgr.collection.url;
-                    mgr.collection = {};
+                    auto url = mgr.inst.collection->url;
+                    mgr.inst.collection = {};
                     StartNXMCollectionInstall(mgr, url);
                 }
             }
@@ -42,19 +42,18 @@ void RenderCollectionWindow(ModMgr& mgr)
                 ImGui::Text("Loading info...");
             }
         }
-        else if (mgr.collection.status == CollectionStatus::WaitingForInstallButton)
+        else if (mgr.inst.collection->status == CollectionStatus::WaitingForInstallButton)
         {
-            ImGui::Text("Compressed Asset Size: %.1f GB", ((float)mgr.collection.info.totalSize) / 1'000'000'000);
+            ImGui::Text("Compressed Asset Size: %.1f GB", ((float)mgr.inst.collection->info.totalSize) / 1'000'000'000);
             bool doInstall = ImGui::Button("INSTALL");
-            ImGui::Text("%s", mgr.collection.info.name.c_str());
-            ImGui::TextWrapped("%s", mgr.collection.info.summary.c_str());
-            ImGui::TextWrapped("%s", mgr.collection.info.description.c_str());
+            ImGui::Text("%s", mgr.inst.collection->info.name.c_str());
+            ImGui::TextWrapped("%s", mgr.inst.collection->info.summary.c_str());
+            ImGui::TextWrapped("%s", mgr.inst.collection->info.description.c_str());
 
             if (doInstall)
             {
-                mgr.inst.collection = mgr.collection.url;
                 bool foundBundle = false;
-                std::filesystem::path collectionData(mgr.config.projectDir / ".mod_staging" / std::format("{}-{}", mgr.collection.url.slug, mgr.collection.url.rev) / "collection.json");
+                std::filesystem::path collectionData(mgr.config.projectDir / ".mod_staging" / std::format("{}-{}", mgr.inst.collection->url.slug, mgr.inst.collection->url.rev) / "collection.json");
                 if (std::filesystem::is_regular_file(collectionData))
                 {
                     std::cout << "Found collection bundle, skipping download" << std::endl;
@@ -66,9 +65,9 @@ void RenderCollectionWindow(ModMgr& mgr)
                 }
             }
         }
-        else if (mgr.collection.status == CollectionStatus::FetchingBundleLink)
+        else if (mgr.inst.collection->status == CollectionStatus::FetchingBundleLink)
         {
-            if (mgr.collection.error)
+            if (mgr.inst.collection->error)
             {
                 if (ImGui::Button("Retry"))
                 {
@@ -80,9 +79,9 @@ void RenderCollectionWindow(ModMgr& mgr)
                 ImGui::Text("Fetching bundle info");
             }
         }
-        else if (mgr.collection.status == CollectionStatus::DownloadingBundle)
+        else if (mgr.inst.collection->status == CollectionStatus::DownloadingBundle)
         {
-            if (mgr.collection.error)
+            if (mgr.inst.collection->error)
             {
                 if (ImGui::Button("Retry"))
                 {
@@ -94,13 +93,13 @@ void RenderCollectionWindow(ModMgr& mgr)
                 ImGui::Text("Downloading bundle ");
             }
         }
-        else if (mgr.collection.status == CollectionStatus::DownloadingMods)
+        else if (mgr.inst.collection->status == CollectionStatus::DownloadingMods)
         {
-            if (mgr.collection.error)
+            if (mgr.inst.collection->error)
             {
                 if (ImGui::Button("Retry"))
                 {
-                    mgr.collection.error = false;
+                    mgr.inst.collection->error = false;
                     DownloadCollectionMods(mgr);
                 }
                 ImGui::Text("Will only re-download failed mods");
@@ -127,37 +126,37 @@ void RenderCollectionWindow(ModMgr& mgr)
                 {
                     if (err > 0)
                     {
-                        mgr.collection.error = true;
+                        mgr.inst.collection->error = true;
                     }
                     else
                     {
-                        mgr.collection.installIndex = -1;
-                        mgr.collection.status = CollectionStatus::InstallingMods;
+                        mgr.inst.collection->installIndex = -1;
+                        mgr.inst.collection->status = CollectionStatus::InstallingMods;
                     }
                 }
             }
         }
-        else if (mgr.collection.status == CollectionStatus::InstallingMods)
+        else if (mgr.inst.collection->status == CollectionStatus::InstallingMods)
         {
             ImGui::Text("Installing mods");
-            ImGui::Text("%d/%d   %s", (int)mgr.inst.mods.size(), (int)mgr.collection.bundleDefinition["mods"].size(), mgr.collection.installingCurrentMod.c_str());
+            ImGui::Text("%d/%d   %s", mgr.inst.collection->installIndex, (int)mgr.inst.collection->bundleDefinition["mods"].size(), mgr.inst.collection->installingCurrentMod.c_str());
             UpdateInstallCollectionMods(mgr);
         }
-        else if (mgr.collection.status == CollectionStatus::InstallWaitingFailedMods)
+        else if (mgr.inst.collection->status == CollectionStatus::InstallWaitingFailedMods)
         {
-            if (mgr.collection.error)
+            if (mgr.inst.collection->error)
             {
                 if (ImGui::Button("Retry"))
                 {
-                    mgr.collection.installIndex = -1;
-                    mgr.collection.error = false;
-                    mgr.collection.status = CollectionStatus::InstallingMods;
+                    mgr.inst.collection->installIndex = -1;
+                    mgr.inst.collection->error = false;
+                    mgr.inst.collection->status = CollectionStatus::InstallingMods;
                 }
-                ImGui::Text("%d mods failed to install, or look wrong.", (int)mgr.collection.installErrorInfo.size());
+                ImGui::Text("%d mods failed to install, or look wrong.", (int)mgr.inst.collection->installErrorInfo.size());
                 ImGui::TextWrapped("You should manually check or install the failed mods, then click retry to continue.");
                 ImGui::TextWrapped("Some mods will have residual files in their mod folder.");
                 ImGui::Separator();
-                for (auto&& msg : mgr.collection.installErrorInfo)
+                for (auto&& msg : mgr.inst.collection->installErrorInfo)
                 {
                     ImGui::Text("%s", msg.c_str());
                 }
@@ -167,17 +166,17 @@ void RenderCollectionWindow(ModMgr& mgr)
                 // shouldnt get here
                 if (ImGui::Button("Continue"))
                 {
-                    mgr.collection.status = CollectionStatus::ConfigureLoadOrder;
+                    mgr.inst.collection->status = CollectionStatus::ConfigureLoadOrder;
                 }
             }
         }
-        else if (mgr.collection.status == CollectionStatus::ConfigureLoadOrder)
+        else if (mgr.inst.collection->status == CollectionStatus::ConfigureLoadOrder)
         {
-            if (mgr.collection.error)
+            if (mgr.inst.collection->error)
             {
                 if (ImGui::Button("Retry load order"))
                 {
-                    mgr.collection.error = false;
+                    mgr.inst.collection->error = false;
                     ApplyCollectionLoadOrder(mgr);
                 }
             }
@@ -186,7 +185,7 @@ void RenderCollectionWindow(ModMgr& mgr)
                 ApplyCollectionLoadOrder(mgr);
             }
         }
-        else if (mgr.collection.status == CollectionStatus::Installed)
+        else if (mgr.inst.collection->status == CollectionStatus::Installed)
         {
             ImGui::Text("Done");
             if (ImGui::Button("Reapply Load Order"))

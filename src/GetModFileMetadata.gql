@@ -1,0 +1,23 @@
+query GetColRevInfo(
+    $slug: String,
+    $revision: Int,
+    $viewAdultContent: Boolean,
+    $domain: String
+) {
+    collectionRevision(slug: $slug, viewAdultContent: $viewAdultContent, domainName: $domain, revision: $revision) {
+        totalSize,
+        modCount,
+        downloadLink,
+        collection {
+            description,
+            name,
+            summary,
+            tileImage {
+                url
+            },
+            headerImage {
+                url
+            }
+        }
+    }
+}
