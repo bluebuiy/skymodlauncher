@@ -447,10 +447,11 @@ bool ApplyFomodFileActions(ModMgr & mgr, fomod::InstallActions & fileActions, st
     std::filesystem::path wd = staging;
     for (auto&& action : fileActions.actions)
     {
+
         if (action.action == fomod::FileAction::FileToFile)
         {
-            // i THINK empty == "/"? but it really should be explicit
-            if (action.to.empty())
+            // i THINK empty == "/"? but it really should be fully explicit
+            if (action.to.empty() || action.to == "/")
             {
                 action.to = std::filesystem::path(action.from).filename();
             }
@@ -458,7 +459,6 @@ bool ApplyFomodFileActions(ModMgr & mgr, fomod::InstallActions & fileActions, st
             {
                 action.to = std::filesystem::path(action.to) / std::filesystem::path(action.from).filename();
             }
-            
             try
             {
                 std::filesystem::path fromPath = action.from;
@@ -482,6 +482,12 @@ bool ApplyFomodFileActions(ModMgr & mgr, fomod::InstallActions & fileActions, st
         }
         else if (action.action == fomod::FileAction::DirToDir)
         {
+            // i think??????????
+            if (action.to == "/")
+            {
+                action.to = "";
+            }
+
             std::filesystem::path realFrom = FindCasedPath(staging / std::filesystem::path(action.from));
             std::filesystem::path normTo = NormalizePath(action.to);
             realFrom.make_preferred();

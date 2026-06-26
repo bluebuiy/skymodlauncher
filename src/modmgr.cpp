@@ -1041,6 +1041,8 @@ void UpdateDownloads(ModMgr& mgr)
         mgr.downloadSessions.erase(mgr.downloadSessions.begin() + rm);
     }
 
+    constexpr int MAX_CONCURRENT_DOWNLOADS = 4;
+
     // this is a little jank but i need to control the concurrent download tasks, and I didnt want to do it at the curl level. and the way the async engine is set up 
     // makes it difficult to do there.
     int c = 0;
@@ -1051,7 +1053,7 @@ void UpdateDownloads(ModMgr& mgr)
             ++c;
         }
     }
-    if (c < 4)
+    if (c < MAX_CONCURRENT_DOWNLOADS)
     {
         for (auto&& t : mgr.downloadSessions)
         {
@@ -1061,7 +1063,7 @@ void UpdateDownloads(ModMgr& mgr)
                 t.task.Start(mgr.curlEngine);
                 ++c;
             }
-            if (c >= 4)
+            if (c >= MAX_CONCURRENT_DOWNLOADS)
             {
                 break;
             }
@@ -1352,16 +1354,43 @@ std::string InstallTypeStr(ModInstallType t)
 
 void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collection)
 {
-    auto manifest = GetModManifest(mgr, id);
-    if (!manifest)
+    auto manifestIt = mgr.inst.modFileManifests.find(id);
+    if (manifestIt == mgr.inst.modFileManifests.end())
     {
         return;
     }
 
+    ModManifest* manifest = &manifestIt->second;
+
+
+    ModInstallId installId;
+
     // for now only one mod install allowed
     if (manifest->installInstances.size() > 0)
     {
-        return;
+        auto installInst = GetModInstall(mgr, manifest->installInstances[0]);
+
+        if (installInst)
+        {
+            std::vector<std::string> rmCmd = {
+                "/usr/bin/rm",
+                "-f",
+                "-r",
+                std::filesystem::path(*WordExpand(mgr.config.modFolder)) / installInst->installDir,
+            };
+            if (!LaunchProc(rmCmd, "/"))
+            {
+                std::cout << "Failed to delete mod install: " << installInst->installDir << std::endl;
+            }
+
+        }
+        installId = manifest->installInstances[0];
+        //return;
+    }
+    else
+    {
+        installId = {++mgr.inst.idCounter};
+        manifest->installInstances.push_back(installId);
     }
 
     std::filesystem::path staging;
@@ -1403,7 +1432,17 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
         }
     }
 
-    std::function<void(bool)> installAction = [mgr = &mgr, staging, modFileName, id, collection, manifest](bool succeeded){
+    ModInstall inst;
+    inst.modInstance = id;
+    inst.enabled = true;
+    inst.installDir = modFileName;
+    inst.installType = manifest->installType;
+    inst.loadIndex = 0;
+    inst.name = manifest->logicalName;
+
+    mgr.inst.modInstalls.insert_or_assign(installId, inst);
+
+    std::function<void(bool)> installAction = [mgr = &mgr, staging, modFileName, id, collection, manifest, installId](bool succeeded){
         if (!succeeded)
         {
             mgr->cookingInstall.reset();
@@ -1479,6 +1518,13 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
             isFomod = FindFomod(staging, fomodPath, realModRoot);
         }
 
+        auto iit = mgr->inst.modInstalls.find(installId);
+
+        if (iit == mgr->inst.modInstalls.end())
+        {
+            return;
+        }
+
         if (manualConfig.has_value())
         {
             // To whever thought using a file hash to identify which files to use was a good idea......
@@ -1529,23 +1575,11 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
                 usedInstallType = ModInstallType::Data;
             }
 
-            ModInstallId installId = {++mgr->inst.idCounter};
-
-            ModInstall installInst;
-
-            installInst.name = manifest->logicalName;
-            installInst.installDir = modFileName;
-            installInst.loadIndex = mgr->inst.modInstalls.size();
-            installInst.enabled = true;
-            installInst.installType = usedInstallType;
-            installInst.modInstance = id;
-            installInst.ok = false;
-
-            auto iit = mgr->inst.modInstalls.emplace(installId, installInst);
+            iit->second.installType = usedInstallType;
 
             if (ApplyFomodFileActions(*mgr, install, staging, installDest))
             {
-                iit.first->second.ok = true;
+                iit->second.ok = true;
             }
             else
             {
@@ -1639,20 +1673,6 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
             // TODO check file status?
             auto actions = fomod::GetInstallActions(*fmopt, eval, ss);
 
-            ModInstallId installId = {++mgr->inst.idCounter};
-
-            ModInstall installInst;
-
-            installInst.name = manifest->logicalName;
-            installInst.installDir = modFileName;
-            installInst.loadIndex = mgr->inst.modInstalls.size();
-            installInst.enabled = true;
-            installInst.installType = usedInstallType;
-            installInst.modInstance = id;
-            installInst.ok = false;
-
-            auto iit = mgr->inst.modInstalls.emplace(installId, installInst);
-
             // perform file actions
             if (ApplyFomodFileActions(*mgr, actions, realModRoot, installDest))
             {
@@ -1665,7 +1685,7 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
                 }
                 else
                 {
-                    iit.first->second.ok = true;
+                    iit->second.ok = true;
                 }
             }
             else
@@ -1685,6 +1705,7 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
             std::filesystem::path guessedModRoot;
             std::filesystem::path modRoot = staging;
 
+            #if 0
             // this check might be unecessary now that we look for known folders and files
             std::string rootname = modRoot.filename();
             for (std::filesystem::directory_iterator di(modRoot); di != std::filesystem::directory_iterator(); ++di)
@@ -1696,6 +1717,7 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
                     break;
                 }
             }
+            #endif
             bool setNotOk = false;
             auto guessedInstallType = GuessInstallType(modRoot, guessedModRoot);
             if (guessedInstallType == ModInstallType::Undetermined)
@@ -1743,25 +1765,10 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
             {
                 ; // noop
             }
-
-            // otherwise create the mod entry and move mod into it
-            ModInstallId installId = {++mgr->inst.idCounter};
-
-            ModInstall installInst;
-
-            installInst.name = manifest->logicalName;
-            installInst.installDir = modFileName;
-            installInst.loadIndex = mgr->inst.modInstalls.size();
-            installInst.enabled = true;
-            installInst.installType = instType;
-            installInst.modInstance = id;
-            installInst.ok = false;
-
-            auto iit = mgr->inst.modInstalls.emplace(installId, installInst);
             
             if (MoveDirNormalizePaths(modRoot, installDest))
             {
-                iit.first->second.ok = true;
+                iit->second.ok = true;
             }
         }
 
@@ -1795,7 +1802,6 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
         }
 
         std::string stem = std::filesystem::path(dl->fileName).stem();
-        std::string modFileName = std::format("{}-{}", manifest->nxmModId, manifest->nxmFileId);
         std::filesystem::path staging = mgr.config.projectDir / ".mod_staging" / stem;
         std::filesystem::path inFile = mgr.config.projectDir / "download" / dl->fileName;
 

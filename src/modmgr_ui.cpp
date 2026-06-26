@@ -417,7 +417,7 @@ void RenderModDownloads(ModMgr& mgr)
             auto mf = GetModManifest(mgr, mgr.downloadSessions[i].id);
             if (mgr.dlSearch.empty() || mf && (mf->logicalName.find(mgr.dlSearch, 0) != std::string::npos || mf->name.find(mgr.dlSearch, 0) != std::string::npos))
             {
-                ImGui::PushID(mgr.downloadSessions[i].fileId);
+                ImGui::PushID(mgr.downloadSessions[i].id.id);
 
                 ImGui::PushStyleColor(ImGuiCol_Button, DELETE_COLOR);
                 if (ImGui::Button("X"))
@@ -582,6 +582,12 @@ void RenderModMgr(ModMgr& mgr)
     {
         ImGui::InputText("Search", &mgr.modSearch);
         std::vector<ModId> modList;
+
+        for (auto&& install : mgr.inst.modInstalls)
+        {
+            modList.push_back(install.second.modInstance);
+        }
+
         std::sort(modList.begin(), modList.end(), [&](ModId const & a, ModId const & b){
             auto ia = mgr.inst.modFileManifests.find(a);
             auto ib = mgr.inst.modFileManifests.find(b);

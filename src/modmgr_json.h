@@ -40,7 +40,8 @@ namespace nlohmann
         {
             if (mi)
             {
-                j = *mi;
+                adl_serializer<T>::to_json(j, *mi);
+                //j = *mi;
             }
             else
             {
@@ -56,7 +57,9 @@ namespace nlohmann
             }
             else
             {
-                mi = j.get<T>();
+                T t;
+                adl_serializer<T>::from_json(j, t);
+                mi = std::move(t);
             }
         }
     };
@@ -147,6 +150,14 @@ namespace nlohmann
         static void to_json(json& j, NxmCollection const & cfg);
         
         static void from_json(json const & j, NxmCollection & cfg);
+    };
+
+    template <>
+    struct adl_serializer<ModInstall>
+    {
+        static void to_json(json& j, ModInstall const & cfg);
+        
+        static void from_json(json const & j, ModInstall & cfg);
     };
 }
 

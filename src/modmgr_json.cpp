@@ -87,6 +87,7 @@ namespace nlohmann
         JPUT(j, mi, downloads);
         JPUT(j, mi, collection);
         JPUT(j, mi, modFileManifests);
+        JPUT(j, mi, modInstalls);
         JPUT(j, mi, idCounter);
     }
 
@@ -98,7 +99,8 @@ namespace nlohmann
         JPULL(j, mi, customVariables);
         JPULL(j, mi, downloads);
         JPULL(j, mi, collection);
-        JPULL(j, mi, modFileManifests); 
+        JPULL(j, mi, modFileManifests);
+        JPULL(j, mi, modInstalls);
         JPULL(j, mi, idCounter);
     }
     
@@ -227,5 +229,31 @@ namespace nlohmann
         JPULL(j, cv, installErrorInfo);
         JPULL(j, cv, status);
     }
+
+
+    void adl_serializer<ModInstall>::to_json(json& j, ModInstall const & cv)
+    {
+        JPUT(j, cv, name);
+        JPUT(j, cv, installDir);
+        JPUT(j, cv, loadIndex);
+        JPUT(j, cv, enabled);
+        JPUT(j, cv, installType);
+        JPUT(j, cv, modInstance);
+        JPUT(j, cv, installMessages);
+        JPUT(j, cv, ok);
+    }
+
+    void adl_serializer<ModInstall>::from_json(json const & j, ModInstall& cv)
+    {
+        JPULL(j, cv, name);
+        JPULL(j, cv, installDir);
+        JPULL(j, cv, loadIndex);
+        JPULL(j, cv, enabled);
+        JPULL(j, cv, installType);
+        JPULL(j, cv, modInstance);
+        JPULL(j, cv, installMessages);
+        JPULL(j, cv, ok);
+    }
+
 }
 

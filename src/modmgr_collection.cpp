@@ -401,7 +401,7 @@ void DownloadCollectionMods(ModMgr &mgr)
             manifest.nxmColRev = mgr.inst.collection->url.rev;
             manifest.nxmColBundleFile = bundleFileName;
             manifest.name = mod["name"].get<std::string>();
-            manifest.logicalName = mod["source"]["logicalFilename"].get<std::string>();
+            manifest.logicalName = mod["source"]["logicalFilename"].is_string() ? mod["source"]["logicalFilename"].get<std::string>() : bundleFileName;
             manifest.installType = installType;
 
             auto mmid = CreateModManifest(mgr, manifest);
@@ -448,7 +448,7 @@ void UpdateInstallCollectionMods(ModMgr &mgr)
     if (it->second.installInstances.size() != 0)
     {
         auto modInstall = GetModInstall(mgr, it->second.installInstances[0]);
-        if (modInstall)
+        if (modInstall && modInstall->ok)
         {
             std::cout << "Skipping installed mod: " << modInfo["name"].get<std::string>() << std::endl;
             return;
@@ -537,8 +537,8 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
                 std::cout << "Unknown load rule: " << type << std::endl;
                 continue;
             }
-            std::string srcFile = rule["source"]["fileExpression"].get<std::string>();
-            std::string refFile = rule["reference"]["fileExpression"].get<std::string>();
+            std::string srcFile = rule["source"]["logicalFileName"].is_string() ? rule["source"]["logicalFileName"].get<std::string>() : rule["source"]["fileExpression"].get<std::string>();
+            std::string refFile = rule["reference"]["logicalFileName"].is_string() ? rule["reference"]["logicalFileName"].get<std::string>() : rule["reference"]["fileExpression"].get<std::string>();
             auto refIt = std::find_if(nodes.begin(), nodes.end(), [&](ModDepNode const & n) {
                 return n.name == refFile;
             });
