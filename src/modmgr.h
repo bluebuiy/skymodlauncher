@@ -101,8 +101,6 @@ struct ModDownloadRt
     std::filesystem::path outFile;
     std::string game;
     std::string fileName;
-    int modId;
-    int fileId;
     std::string expires;
     std::string key;
     //std::string userId;
@@ -222,6 +220,7 @@ void HandleNXMUrl(ModMgr& mgr, std::string const & urlStr);
 void InitializeNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url, std::optional<std::string> name, ModInstallType installType);
 void InitializeNXMModDownload2(ModMgr& mgr, ModId id);
 void StartNXMCollectionInstall(ModMgr& mgr, NxmCollectionUrl const & url);
+void InitializeIndependentDownload(ModMgr& mgr, ModId id);
 
 void UpdateDownloads(ModMgr& mgr);
 

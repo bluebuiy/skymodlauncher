@@ -716,12 +716,11 @@ std::string GetModNameFromDownloadUrl(std::string const & url)
 struct ModDownloadFinished
 {
     ModMgr* mgr = nullptr;
-    int fileId = 0;
-    int modId = 0;
+    ModId id;
     void operator()(CurlEasyTaskResult& result)
     {
         auto it = std::find_if(mgr->downloadSessions.begin(), mgr->downloadSessions.end(), [&](ModDownloadRt const & m) {
-            return m.fileId == fileId && m.modId == modId;
+            return m.id == id;
         });
         if (result.cError != CURLE_OK || result.httpCode != 200)
         {
@@ -748,20 +747,18 @@ struct ModDownloadFinished
 struct ModUrlFinished
 {
     ModMgr* mgr = nullptr;
-    int fileId = 0;
-    int modId = 0;
     ModId manifestId;
 
     void operator()(CurlEasyTaskResult& result)
     {
         auto it = std::find_if(mgr->downloadSessions.begin(), mgr->downloadSessions.end(), [&](ModDownloadRt const & m) {
-            return m.fileId == fileId && m.modId == modId;
+            return m.id == manifestId;
         });
         if (result.cError != CURLE_OK || result.httpCode != 200)
         {
             if (it != mgr->downloadSessions.end())
             {
-                std::cout << "Error downloading mod file info: " << " " << fileId << " " << modId << std::endl;
+                std::cout << "Error downloading mod file info: " << " " << it->fileName << std::endl;
                 it->state = ModDlState::Error;
             }
             std::cout << "Curl status: " << result.cError << std::endl;
@@ -785,8 +782,7 @@ struct ModUrlFinished
 
         ModDownloadFinished dlFinished;
         dlFinished.mgr = mgr;
-        dlFinished.fileId = fileId;
-        dlFinished.modId = modId;
+        dlFinished.id = manifestId;
         auto downloadModTask = CreateTask<CurlEasyTask>(dlFinished);
 
         CURLU* url = curl_url();
@@ -930,14 +926,11 @@ void InitializeNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url, std::optio
 
         if (dl != mgr->downloadSessions.end())
         {
-            std::cout << "Mod already in downloads";
             return;
         }
 
         ModUrlFinished taskFinished;
         taskFinished.mgr = mgr;
-        taskFinished.fileId = url.fileId;
-        taskFinished.modId = url.modId;
         taskFinished.manifestId = mmid;
 
         std::string dlInfo;
@@ -955,8 +948,6 @@ void InitializeNXMModDownload(ModMgr& mgr, NxmModFileUrl const & url, std::optio
         ModDownloadRt dlInst;
         dlInst.key = url.key;
         dlInst.expires = url.expires;
-        dlInst.modId = url.modId;
-        dlInst.fileId = url.fileId;
         dlInst.game = url.game;
         dlInst.id = mmid;
         dlInst.task = task;
@@ -983,14 +974,11 @@ void InitializeNXMModDownload2(ModMgr& mgr, ModId id)
     });
     if (dl != mgr.downloadSessions.end())
     {
-        std::cout << "Mod already in downloads";
         return;
     }
 
     ModUrlFinished taskFinished;
     taskFinished.mgr = &mgr;
-    taskFinished.fileId = mf->nxmFileId;
-    taskFinished.modId = mf->nxmModId;
     taskFinished.manifestId = id;
 
     std::string dlInfo = std::format("https://api.nexusmods.com/v1/games/{}/mods/{}/files/{}/download_link.json", mf->nxmDomain, mf->nxmModId, mf->nxmFileId);
@@ -999,13 +987,49 @@ void InitializeNXMModDownload2(ModMgr& mgr, ModId id)
 
     ModDownloadRt dlInst;
     dlInst.id = id;
-    dlInst.modId = mf->nxmModId;
-    dlInst.fileId = mf->nxmFileId;
     dlInst.game = mf->nxmDomain;
     dlInst.fileName = mf->logicalName;
     dlInst.task = task;
 
     mgr.downloadSessions.emplace_back(std::move(dlInst));
+}
+
+void InitializeIndependentDownload(ModMgr& mgr, ModId id)
+{
+    auto mf = GetModManifest(mgr, id);
+    if (!mf)
+    {
+        return;
+    }
+    auto dl = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & dl) {
+        return dl.id == id;
+    });
+    if (dl != mgr.downloadSessions.end())
+    {
+        return;
+    }
+
+    ModDownloadRt& dlState = mgr.downloadSessions.emplace_back();
+    dlState.id = id;
+    dlState.outFile = mgr.config.projectDir / "download" / mf->logicalName;
+    dlState.fileName = mf->logicalName;
+
+    ModDownloadFinished finished;
+    finished.id = id;
+    finished.mgr = &mgr;
+
+    auto task = CreateTask<CurlEasyTask>(std::move(finished));
+
+    task.task->SetUrl(mf->url.c_str());
+    // I would prefer to not have a bunch of fd open like this
+    task.task->file = fopen(dl->outFile.c_str(), "wb");
+    if (!task.task->file)
+    {
+        dlState.state = ModDlState::Error;
+        return;
+    }
+
+    dl->task = task;
 }
 
 void UpdateDownloads(ModMgr& mgr)
@@ -1059,7 +1083,15 @@ void UpdateDownloads(ModMgr& mgr)
         {
             if (t.state == ModDlState::None)
             {
-                t.state = ModDlState::UrlQuery;
+                auto m = GetModManifest(mgr, t.id);
+                if (m && m->sourceType == FileSource::Nexus)
+                {
+                    t.state = ModDlState::UrlQuery;
+                }
+                else if (m && m->sourceType == FileSource::Independent)
+                {
+                    t.state = ModDlState::ModDownload;
+                }
                 t.task.Start(mgr.curlEngine);
                 ++c;
             }
@@ -1382,9 +1414,13 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
             {
                 std::cout << "Failed to delete mod install: " << installInst->installDir << std::endl;
             }
-
+            installId = manifest->installInstances[0];
         }
-        installId = manifest->installInstances[0];
+        else
+        {
+            installId = {++mgr.inst.idCounter};
+            manifest->installInstances[0] = installId;
+        }
         //return;
     }
     else
@@ -1416,11 +1452,15 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
     }
     else if (manifest->sourceType == FileSource::Independent)
     {
-
+        std::string stem = std::filesystem::path(manifest->name).stem();
+        modFileName = manifest->name;
+        staging = mgr.config.projectDir / ".mod_staging" / stem;
     }
     else if (manifest->sourceType == FileSource::Manual)
     {
-
+        std::string stem = std::filesystem::path(manifest->name).stem();
+        modFileName = manifest->name;
+        staging = mgr.config.projectDir / ".mod_staging" / stem;
     }
     else if (manifest->sourceType == FileSource::CollectionBundle)
     {
@@ -1467,7 +1507,7 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
             // this is not optimal but whatever
             for (auto&& md : mgr->inst.collection->bundleDefinition["mods"])
             {
-                if (md["source"]["logicalFilename"].get<std::string>() == manifest->logicalName)
+                if (md["name"].get<std::string>() == manifest->name)
                 {
                     if (md.contains("choices"))
                     {

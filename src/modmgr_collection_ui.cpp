@@ -23,7 +23,7 @@ void RenderCollectionWindow(ModMgr& mgr)
         ImGui::Text("%s", mgr.inst.collection->info.name.c_str());
         if (ImGui::Button("Cancel"))
         {
-            mgr.inst.collection = {};
+            mgr.inst.collection->status = CollectionStatus::WaitingForInstallButton;
         }
         if (mgr.inst.collection->status == CollectionStatus::FetchingInfo)
         {

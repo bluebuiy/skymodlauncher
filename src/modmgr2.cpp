@@ -30,7 +30,7 @@ ModId CreateModManifest(ModMgr& mgr, ModManifest const & mft)
         auto mfi = mf.second;
         if (mfi.sourceType == mft.sourceType)
         {
-            if (mfi.sourceType == FileSource::CollectionBundle && mfi.nxmColRev == mft.nxmColRev && mfi.nxmColSlug == mft.nxmColSlug && mfi.version == mft.version)
+            if (mfi.sourceType == FileSource::CollectionBundle && mfi.nxmColRev == mft.nxmColRev && mfi.nxmColSlug == mft.nxmColSlug && mfi.version == mft.version && mfi.nxmColBundleFile == mft.nxmColBundleFile)
             {
                 return mf.first;
             }

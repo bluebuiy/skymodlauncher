@@ -342,8 +342,9 @@ void DownloadCollectionMods(ModMgr &mgr)
         {
             std::cout << "Unknown install type: " << typeStr << std::endl;
         }
-
-        if (mod["source"]["type"].get<std::string>() == "nexus")
+        std::string name = mod["name"].get<std::string>();
+        std::string srcType = mod["source"]["type"].get<std::string>();
+        if (srcType == "nexus")
         {
             int modId = mod["source"]["modId"].get<int>();
             int fileId = mod["source"]["fileId"].get<int>();
@@ -356,7 +357,7 @@ void DownloadCollectionMods(ModMgr &mgr)
             manifest.nxmFileId = fileId;
             manifest.nxmDomain = modDomain;
             manifest.logicalName = mod["source"]["logicalFilename"].get<std::string>();
-            manifest.name = mod["name"].get<std::string>();
+            manifest.name = name;
             manifest.installType = installType;
             
             auto mmid = CreateModManifest(mgr, manifest);
@@ -391,7 +392,7 @@ void DownloadCollectionMods(ModMgr &mgr)
             //    it->hName = mod["name"].get<std::string>();
             //}
         }
-        else if (mod["source"]["type"].get<std::string>() == "bundle")
+        else if (srcType == "bundle")
         {
             std::string bundleFileName = mod["source"]["fileExpression"].get<std::string>();
 
@@ -400,11 +401,29 @@ void DownloadCollectionMods(ModMgr &mgr)
             manifest.nxmColSlug = mgr.inst.collection->url.slug;
             manifest.nxmColRev = mgr.inst.collection->url.rev;
             manifest.nxmColBundleFile = bundleFileName;
-            manifest.name = mod["name"].get<std::string>();
+            manifest.name = name;
             manifest.logicalName = mod["source"]["logicalFilename"].is_string() ? mod["source"]["logicalFilename"].get<std::string>() : bundleFileName;
             manifest.installType = installType;
 
             auto mmid = CreateModManifest(mgr, manifest);
+        }
+        else if (srcType == "browse")
+        {
+            ModManifest manifest;
+            manifest.sourceType = FileSource::Independent;
+            manifest.name = name;
+            manifest.logicalName = manifest.name;
+            manifest.installType = installType;
+            manifest.url = mod["source"]["url"].get<std::string>();
+            // verifying the hash would be nice but im not gonna do it right now. its just for versioning, not for security
+
+            auto mmid = CreateModManifest(mgr, manifest);
+
+            InitializeIndependentDownload(mgr, mmid);
+        }
+        else
+        {
+            std::cout << "Unsupported mod source: " << srcType << " mod: " << std::endl;
         }
     }
 
@@ -434,15 +453,15 @@ void UpdateInstallCollectionMods(ModMgr &mgr)
     }
     ++mgr.inst.collection->installIndex;
     auto modInfo = mgr.inst.collection->bundleDefinition["mods"][nextMod];
+    std::string nname = modInfo["name"].get<std::string>();
+    //std::string lname = modInfo["source"]["logicalFilename"].get<std::string>();
 
-    std::string lname = modInfo["source"]["logicalFilename"].get<std::string>();
-
-    auto it = std::find_if(mgr.inst.modFileManifests.begin(), mgr.inst.modFileManifests.end(), [&](std::pair<ModId, ModManifest> const & m){ return m.second.logicalName == lname; });
+    auto it = std::find_if(mgr.inst.modFileManifests.begin(), mgr.inst.modFileManifests.end(), [&](std::pair<ModId, ModManifest> const & m){ return m.second.name == nname; });
 
     if (it == mgr.inst.modFileManifests.end())
     {
         // should not happen
-        std::cout << "Unable to find mod" << lname << std::endl;
+        std::cout << "Unable to find mod " << nname << std::endl;
         return;
     }
     if (it->second.installInstances.size() != 0)
