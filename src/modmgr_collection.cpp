@@ -469,7 +469,10 @@ void UpdateInstallCollectionMods(ModMgr &mgr)
         auto modInstall = GetModInstall(mgr, it->second.installInstances[0]);
         if (modInstall && modInstall->ok)
         {
-            std::cout << "Skipping installed mod: " << modInfo["name"].get<std::string>() << std::endl;
+            if (mgr.verbose)
+            {
+                std::cout << "Skipping installed mod: " << modInfo["name"].get<std::string>() << std::endl;
+            }
             return;
         }
     }

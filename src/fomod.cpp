@@ -337,7 +337,7 @@ std::optional<Fomod> Load(std::filesystem::path const & path)
         std::string schema = schemaAttrib.as_string();
         if (schema.find("ModConfig5.0.xsd") == std::string::npos)
         {
-            return {};
+            std::cout << "Missing or invalid schema: " << schema << std::endl;
         }
     }
 

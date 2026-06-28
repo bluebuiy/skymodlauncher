@@ -122,4 +122,26 @@ void SetInstallIndex(ModMgr& mgr, ModInstallId id, int index)
     inst->second.loadIndex = index;
 }
 
+void ClearInstallErrors(ModMgr& mgr, ModInstallId id)
+{
+    auto inst = mgr.inst.modInstalls.find(id);
 
+    if (inst == mgr.inst.modInstalls.end())
+    {
+        return;
+    }
+
+    inst->second.ok = true;
+    inst->second.installMessages.clear();
+}
+
+void AddInstallMessage(ModMgr& mgr, ModInstallId id, std::string const & msg)
+{
+    auto inst = mgr.inst.modInstalls.find(id);
+
+    if (inst == mgr.inst.modInstalls.end())
+    {
+        return;
+    }
+    inst->second.installMessages.emplace_back(msg);
+}

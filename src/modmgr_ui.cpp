@@ -571,7 +571,12 @@ void RenderModMgr(ModMgr& mgr)
         {
             mgr.sortMode = 1;
         }
+        if (ImGui::RadioButton("Errors", mgr.sortMode == 2))
+        {
+            mgr.sortMode = 2;
+        }
         ImGui::Checkbox("Enable mod removal", &mgr.enableRemove);
+        ImGui::Checkbox("Enable error mode", &mgr.enableSetOk);
     }
 
     ImGui::End();
@@ -625,6 +630,40 @@ void RenderModMgr(ModMgr& mgr)
             {
                 return ia->second.name < ib->second.name;
             }
+            else if (mgr.sortMode == 2)
+            {
+                auto iai = mgr.inst.modInstalls.find(ia->second.installInstances.empty() ? ModInstallId{0} : ia->second.installInstances[0]);
+                auto ibi = mgr.inst.modInstalls.find(ib->second.installInstances.empty() ? ModInstallId{0} : ib->second.installInstances[0]);
+                bool af = iai == mgr.inst.modInstalls.end() || iai->second.ok == true;
+                bool bf = ibi == mgr.inst.modInstalls.end() || ibi->second.ok == true;
+                return (int)af < (int)bf;
+                #if 0
+                if (iai == mgr.inst.modInstalls.end() && ibi == mgr.inst.modInstalls.end())
+                {
+                    return true;
+                }
+                else if (ibi == mgr.inst.modInstalls.end())
+                {
+                    return false;
+                }
+                else if (iai->second.ok && ibi->second.ok)
+                {
+                    return true;
+                }
+                else if (iai->second.ok == false && ibi->second.ok == true)
+                {
+                    return false;
+                }
+                else if (ibi->second.ok == false && iai->second.ok == true)
+                {
+                    return true;
+                }
+                else
+                {
+                    return true;
+                }
+                #endif
+            }
             else
             {
                 // ??
@@ -650,9 +689,9 @@ void RenderModMgr(ModMgr& mgr)
                 ImGui::PushID(mf->logicalName.c_str());
 
                     if (inst)
-                        ImGui::Text("%3d", inst->loadIndex);
+                        ImGui::Text("%4d", inst->loadIndex);
                     else
-                        ImGui::Text("   ");
+                        ImGui::Text("    ");
 
                     ImGui::SameLine();
                     bool enb = false;
@@ -697,6 +736,34 @@ void RenderModMgr(ModMgr& mgr)
                             del = i;
                         }
                         ImGui::PopStyleColor(1);
+                    }
+
+                    if (mgr.enableSetOk)
+                    {
+                        ImGui::SameLine();
+                        ImGui::PushStyleColor(ImGuiCol_Button, DELETE_COLOR);
+                        if (ImGui::Button("Clear errors"))
+                        {
+                            ModInstallId iid = mf->installInstances.empty() ? ModInstallId{0} : mf->installInstances[0];
+                            ClearInstallErrors(mgr, iid);
+                        }
+                        if (ImGui::BeginItemTooltip())
+                        {
+                            ImGui::Text("Sets ok to true and clear the install messages.");
+                            ImGui::EndTooltip();
+                        }
+                        ImGui::PopStyleColor();
+                    }
+
+                    ImGui::SameLine();
+                    ImGui::TextColored(ImVec4(1,0.2,0.2,1), inst->ok ? (inst->installMessages.empty() ? " " : "+") : "!");
+                    if (!inst->installMessages.empty() && ImGui::BeginItemTooltip())
+                    {
+                        for (auto&& msg : inst->installMessages)
+                        {
+                            ImGui::Text("%s",msg.c_str());
+                        }
+                        ImGui::EndTooltip();
                     }
                     
                     ImGui::SameLine();

@@ -141,6 +141,7 @@ struct ModMgr
     bool selectingExec = false;
     bool enableRemove = false;
     int sortMode = 0;
+    bool enableSetOk = false;
     bool makingNewMod = false;
     bool settingsOpen = false;
     bool foundSkyrimExe = false;
@@ -178,7 +179,8 @@ std::vector<ModInstallId> GetModInstalls(ModMgr& mgr);
 std::optional<ModInstall> GetModInstall(ModMgr& mgr, ModInstallId);
 //ModInstallId CreateEmptyInstall(ModMgr& mgr, std::string const & name);
 void SetInstallIndex(ModMgr& mgr, ModInstallId id, int index);
-
+void ClearInstallErrors(ModMgr& mgr, ModInstallId id);
+void AddInstallMessage(ModMgr& mgr, ModInstallId id, std::string const & msg);
 
 struct ExecToolProgram : public ProcInvoke
 {

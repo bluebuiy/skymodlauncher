@@ -263,7 +263,7 @@ void RenderFomod(ModMgr& mgr)
     }
     else if (doInstall)
     {
-        ApplyFomodFileActions(mgr, fomod.fileActions, mgr.config.projectDir / fomod.realRoot, fomod.installPrefix);
+        bool ok = ApplyFomodFileActions(mgr, fomod.fileActions, mgr.config.projectDir / fomod.realRoot, fomod.installPrefix);
 
 
         auto mf = GetModManifest(mgr, mgr.fomodState->modId);
@@ -271,20 +271,19 @@ void RenderFomod(ModMgr& mgr)
         {
             std::cout << "Manifest disappeared!" << std::endl;
         }
-
-        ModInstallId installId = {++mgr.inst.idCounter};
-
-        ModInstall installInst;
-
-        installInst.name = mf->logicalName;
-        installInst.installDir = fomod.installDir;
-        installInst.loadIndex = mgr.inst.modInstalls.size();
-        installInst.enabled = true;
-        installInst.installType = mf->installType;
-        installInst.modInstance = mgr.fomodState->modId;
-        installInst.ok = false;
-
-        mgr.inst.modInstalls.emplace(installId, installInst);
+        
+        auto inst = mgr.inst.modInstalls.find(mf->installInstances.empty() ? ModInstallId{0} : mf->installInstances[0]);
+        if (inst != mgr.inst.modInstalls.end())
+        {
+            if (ok)
+            {
+                inst->second.ok = true;
+            }
+        }
+        else
+        {
+            std::cout << "Install disappeared!" << std::endl;
+        }
 
         DiscoverPlugins(mgr);
 
@@ -414,7 +413,7 @@ bool MoveDirNormalizePaths(std::filesystem::path const & src, std::filesystem::p
     return true;
 }
 
-std::filesystem::path FindCasedPath(std::filesystem::path const & pathIn)
+std::optional<std::filesystem::path> FindCasedPath(std::filesystem::path const & pathIn)
 {
     auto path = pathIn;
     path.make_preferred();
@@ -423,14 +422,20 @@ std::filesystem::path FindCasedPath(std::filesystem::path const & pathIn)
     ++pi;
     while (pi != path.end())
     {
+        bool found = false;
         for (auto it = std::filesystem::directory_iterator(result); it != std::filesystem::directory_iterator(); ++it)
         {
             //std::cout << it->path() << "   " << result << "   " << *pi << std::endl;
             if (0 == strcasecmp(it->path().filename().c_str(), pi->c_str()))
             {
+                found = true;
                 result = it->path();
                 break;
             }
+        }
+        if (!found)
+        {
+            return {};
         }
         ++pi;
     }
@@ -464,11 +469,19 @@ bool ApplyFomodFileActions(ModMgr & mgr, fomod::InstallActions & fileActions, st
                 std::filesystem::path fromPath = action.from;
                 std::filesystem::path toPath = action.to;
                 std::filesystem::path dstPath = prefix / std::filesystem::path(NormalizePath(toPath));
-                std::filesystem::path realFrom = FindCasedPath(staging / std::filesystem::path(fromPath));
-                if (!std::filesystem::exists(dstPath))
+                std::optional<std::filesystem::path> realFrom = FindCasedPath(staging / std::filesystem::path(fromPath));
+                if (realFrom)
                 {
-                    std::filesystem::create_directories(dstPath.parent_path());
-                    std::filesystem::create_hard_link(realFrom, prefix / std::filesystem::path(NormalizePath(toPath)));
+                    if (!std::filesystem::exists(dstPath))
+                    {
+                        std::filesystem::create_directories(dstPath.parent_path());
+                        std::filesystem::create_hard_link(*realFrom, prefix / std::filesystem::path(NormalizePath(toPath)));
+                    }
+                }
+                else
+                {
+                    success = false;
+                    std::cout << "!!!!!!!!!!!! Failed to find content file: " << action.from << std::endl;
                 }
             }
             catch (std::filesystem::filesystem_error const & err)
@@ -488,15 +501,23 @@ bool ApplyFomodFileActions(ModMgr & mgr, fomod::InstallActions & fileActions, st
                 action.to = "";
             }
 
-            std::filesystem::path realFrom = FindCasedPath(staging / std::filesystem::path(action.from));
-            std::filesystem::path normTo = NormalizePath(action.to);
-            realFrom.make_preferred();
-            normTo.make_preferred();
-            std::filesystem::create_directories(prefix / normTo);
-            if (!MoveDirNormalizePaths(realFrom, prefix / normTo))
+            std::optional<std::filesystem::path> realFrom = FindCasedPath(staging / std::filesystem::path(action.from));
+            if (realFrom)
+            {
+                std::filesystem::path normTo = NormalizePath(action.to);
+                realFrom->make_preferred();
+                normTo.make_preferred();
+                std::filesystem::create_directories(prefix / normTo);
+                if (!MoveDirNormalizePaths(*realFrom, prefix / normTo))
+                {
+                    success = false;
+                    std::cout << "!!!!!!!!!!!! Failed to install correctly!" << std::endl;
+                }
+            }
+            else
             {
                 success = false;
-                std::cout << "!!!!!!!!!!!! Failed to install correctly!" << std::endl;
+                std::cout << "!!!!!!!!!!!! Failed to find content directory: " << action.from << std::endl;
             }
         }
     }

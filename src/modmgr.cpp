@@ -1121,7 +1121,7 @@ struct DecompressFileResult
         }
         else
         {
-            if (!next)
+            if (next)
             {
                 next(false);
             }
@@ -1195,7 +1195,10 @@ ProcessTask UnzipFile(std::filesystem::path const & file, std::filesystem::path 
     else
     {
         std::cout << "Unknown file type: " << type << std::endl;
-        return {};
+        // put a dummy command so the task can fail successfully.
+        extractCmd = {
+            "/usr/bin/false"
+        };
     }
 
     DecompressFileResult result;
@@ -1452,9 +1455,17 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
     }
     else if (manifest->sourceType == FileSource::Independent)
     {
+        auto dl = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & rt) {
+            return rt.id == id;
+        });
+        if (dl == mgr.downloadSessions.end())
+        {
+            return;
+        }
         std::string stem = std::filesystem::path(manifest->name).stem();
         modFileName = manifest->name;
         staging = mgr.config.projectDir / ".mod_staging" / stem;
+        archive = mgr.config.projectDir / "download" / dl->fileName;
     }
     else if (manifest->sourceType == FileSource::Manual)
     {
@@ -1482,9 +1493,17 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
 
     mgr.inst.modInstalls.insert_or_assign(installId, inst);
 
-    std::function<void(bool)> installAction = [mgr = &mgr, staging, modFileName, id, collection, manifest, installId](bool succeeded){
+    std::function<void(bool)> installAction = [mgr = &mgr, staging, modFileName, id, collection, manifest, installId](bool succeeded) {
         if (!succeeded)
         {
+            mgr->cookingInstall.reset();
+            return;
+        }
+
+        if (!std::filesystem::is_directory(staging))
+        {
+            std::cout << "No directory with mod contents in staging directory" << std::endl;
+            AddInstallMessage(*mgr, installId, std::format("Mod contents not present in staging directory {}", staging.c_str()));
             mgr->cookingInstall.reset();
             return;
         }
@@ -1534,7 +1553,8 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
                         catch (...)
                         {
                             confGood = false;
-                            //mgr.collection.installErrorInfo.emplace_back(modInfo["name"].get<std::string>());
+                            std::cout << "Invalid fomod configuration" << std::endl;
+                            AddInstallMessage(*mgr, installId, "Invalid fomod configuration");
                         }
                     }
                     else if (md.contains("hashes"))
@@ -1592,6 +1612,7 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
                 if (it == hashedFiles.end())
                 {
                     std::cout << "Failed to find file with md5 " << fileSpec.md5 << std::endl;
+                    AddInstallMessage(*mgr, installId, std::format("Failed to find file with md5 {}", fileSpec.md5));
                 }
                 else
                 {
@@ -1671,6 +1692,7 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
                         else
                         {
                             std::cout << "Invalid fomod preset!" << std::endl;
+                            AddInstallMessage(*mgr, installId, "Invalid fomod preset");
                             return;
                         }
                     }
@@ -1721,7 +1743,7 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
                 if (postInstallType == ModInstallType::Conflicting)
                 {
                     std::cout << "!!!!!!!! Mod looks like it installed incorrectly: " << manifest->logicalName << std::endl;
-                    //mgr->collection.installErrorInfo.push_back(dl->fileName);
+                    AddInstallMessage(*mgr, installId, "Appears to be installed incorrectly");
                 }
                 else
                 {
@@ -1730,9 +1752,8 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
             }
             else
             {
-                
-                std::cout << "!!!!!!!! Fomod installed incorrectly, manual install required: " << manifest->logicalName << std::endl;
-                //mgr->collection.installErrorInfo.push_back(dl->fileName);
+                std::cout << "!!!!!!!! Fomod installed incorrectly, manual intervention required: " << manifest->logicalName << std::endl;
+                AddInstallMessage(*mgr, installId, "Fomod failed, manual intervention required");
             }
         }
         else if (isFomod && !collection)
@@ -1766,6 +1787,7 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
                 {
                     std::cout << "Unble to guess install type for " << manifest->logicalName << " falling back to type specified in collection: " << InstallTypeStr(manifest->installType) << std::endl;
                 }
+                AddInstallMessage(*mgr, installId, "Unable to determine install type, assumed Data");
                 // if we cant guess it, and we havent been told what it is, then assume it's data
                 if (instType == ModInstallType::Undetermined)
                 {
@@ -1775,7 +1797,7 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
             else if (guessedInstallType == ModInstallType::Conflicting)
             {
                 std::cout << "!!!!!!!! Mod " << manifest->logicalName << " may be packaged incorrectly, may be installed wrong!  Intalling as " << InstallTypeStr(manifest->installType) << std::endl;
-                //mgr->collection.installErrorInfo.push_back(dl->fileName);
+                AddInstallMessage(*mgr, installId, "Appears to be packaged incorrectly");
                 setNotOk = true;
             }
             else if (guessedInstallType != manifest->installType)
@@ -1785,6 +1807,12 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
                     std::cout << "!!!!!!!! Mod's install type is " << InstallTypeStr(manifest->installType) << " but looks like " << InstallTypeStr(guessedInstallType) << ", using guessed type instead" << std::endl;
                     std::cout << "!!!!!!!! Using " << guessedModRoot << " as the true mod root" << std::endl;
                 }
+                AddInstallMessage(*mgr, installId,
+                    std::format("Detected different install type than specified in collection. Specified: {} Used: {}",
+                        InstallTypeStr(manifest->installType),
+                        InstallTypeStr(guessedInstallType)
+                    )
+                );
                 instType = guessedInstallType;
                 modRoot = guessedModRoot;
             }
@@ -1794,6 +1822,7 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
                 {
                     std::cout << "!!!!!!!! Guessed mod root is different than default for mod " << manifest->logicalName << " at " << guessedModRoot << " with type " << InstallTypeStr(instType) << std::endl;
                 }
+                AddInstallMessage(*mgr, installId, std::format("Mod root determined to be {}", guessedModRoot.c_str()));
                 modRoot = guessedModRoot;
             }
             
@@ -1812,16 +1841,19 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
             }
         }
 
-        // remove staging
-        std::vector<std::string> rmCmd = {
-            "/usr/bin/rm",
-            "-f",
-            "-r",
-            staging,
-        };
-        if (!LaunchProc(rmCmd, "/"))
+        if (manifest->sourceType != FileSource::CollectionBundle && (isFomod && collection))
         {
-            std::cout << "Failed to delete mod staging dir: " << staging << std::endl;
+            // remove staging
+            std::vector<std::string> rmCmd = {
+                "/usr/bin/rm",
+                "-f",
+                "-r",
+                staging,
+            };
+            if (!LaunchProc(rmCmd, "/"))
+            {
+                std::cout << "Failed to delete mod staging dir: " << staging << std::endl;
+            }
         }
 
         mgr->cookingInstall.reset();
@@ -1833,29 +1865,19 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
 
     if (manifest->sourceType == FileSource::Nexus)
     {
-        auto dl = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & rt) {
-            return rt.id == id;
-        });
-        if (dl == mgr.downloadSessions.end())
-        {
-            return;
-        }
-
-        std::string stem = std::filesystem::path(dl->fileName).stem();
-        std::filesystem::path staging = mgr.config.projectDir / ".mod_staging" / stem;
-        std::filesystem::path inFile = mgr.config.projectDir / "download" / dl->fileName;
-
         auto task = UnzipFile(archive, staging, std::move(installAction));
         mgr.cookingInstall = task;
         task.Start(mgr.processEngine);
     }
     else if (manifest->sourceType == FileSource::Independent)
     {
-
+        auto task = UnzipFile(archive, staging, std::move(installAction));
+        mgr.cookingInstall = task;
+        task.Start(mgr.processEngine);
     }
     else if (manifest->sourceType == FileSource::Manual)
     {
-
+        std::cout << "!!!!!! Manual manifest not implemented" << std::endl;
     }
     else if (manifest->sourceType == FileSource::CollectionBundle)
     {
