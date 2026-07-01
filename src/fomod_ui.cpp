@@ -154,7 +154,7 @@ void RenderFomod(ModMgr& mgr)
                 }
                 else
                 {
-                    // cant deselect
+                    fomod.ssInfo.options[sel].selected = false;
                 }
             }
             else if (stype == fomod::SelectionType::AtLeastOne)
@@ -423,14 +423,21 @@ std::optional<std::filesystem::path> FindCasedPath(std::filesystem::path const &
     while (pi != path.end())
     {
         bool found = false;
-        for (auto it = std::filesystem::directory_iterator(result); it != std::filesystem::directory_iterator(); ++it)
+        if (*pi == "")
         {
-            //std::cout << it->path() << "   " << result << "   " << *pi << std::endl;
-            if (0 == strcasecmp(it->path().filename().c_str(), pi->c_str()))
+            found = true;
+        }
+        else
+        {
+            for (auto it = std::filesystem::directory_iterator(result); it != std::filesystem::directory_iterator(); ++it)
             {
-                found = true;
-                result = it->path();
-                break;
+                //std::cout << it->path() << "   " << result << "   " << *pi << std::endl;
+                if (0 == strcasecmp(it->path().filename().c_str(), pi->c_str()))
+                {
+                    found = true;
+                    result = it->path();
+                    break;
+                }
             }
         }
         if (!found)

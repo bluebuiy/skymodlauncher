@@ -442,13 +442,19 @@ void RenderModDownloads(ModMgr& mgr)
                 ImGui::PopStyleColor(1);
                 ImGui::SameLine();
                 char const * state = "Unknown";
-                switch(mgr.downloadSessions[i].state)
+                switch (mgr.downloadSessions[i].state)
                 {
+                    case ModDlState::None:
+                    {
+                        state = "Pending";
+                        break;
+                    }
                     case ModDlState::UrlQuery:
                     {
                         state = "Fetching Info";
                         break;
                     }
+                    
                     case ModDlState::Error:
                     {
                         state = "Error";
@@ -694,8 +700,15 @@ void RenderModMgr(ModMgr& mgr)
                         ImGui::Text("    ");
 
                     ImGui::SameLine();
-                    bool enb = false;
-                    ImGui::Checkbox("##enb", inst ? &inst->enabled : &enb);
+                    bool enb = inst ? inst->enabled : false;
+                    if (ImGui::Checkbox("##enb", &enb))
+                    {
+                        auto instIt = mgr.inst.modInstalls.find(mf->installInstances[0]);
+                        if (instIt != mgr.inst.modInstalls.end())
+                        {
+                            instIt->second.enabled = enb;
+                        }
+                    }
 
                     // need to make actually good load index ui
                     /*

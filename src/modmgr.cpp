@@ -65,7 +65,7 @@ void LaunchExec(ModMgr& mgr, std::string const & execName)
     ForkInvoke(&ex);
 }
 
-void __attribute__((optimize("O0"))) DiscoverPlugins(ModMgr& mgr)
+void DiscoverPlugins(ModMgr& mgr)
 {
     // plugins are always in ./Data/
 

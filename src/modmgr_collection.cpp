@@ -500,6 +500,8 @@ struct PluginDepNode
 
 void ApplyCollectionLoadOrder(ModMgr &mgr)
 {
+    // "to" depends on "from", or "from" sorts before "to", "from" is before "to"
+
     // mod order
     {
         std::vector<ModDepNode> nodes;
@@ -615,6 +617,7 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
                 if (mii != mgr.inst.modInstalls.end())
                 {
                     mii->second.loadIndex = i;
+                    ++i;
                 }
                 else
                 {
@@ -705,14 +708,14 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
             auto src = pluginNodes.find(pluginName);
             if (pluginRule.contains("after"))
             {
-                for (auto&& after : pluginRule["after"])
+                for (auto&& afterName : pluginRule["after"])
                 {
                     auto ne = std::make_unique<intrusive::dg_edge<PluginDepNode>>();
-                    auto ref = pluginNodes.find(after.get<std::string>());
-                    if (ref != pluginNodes.end())
+                    auto after = pluginNodes.find(afterName.get<std::string>());
+                    if (after != pluginNodes.end())
                     {
-                        ne->to = ref->second.get();
                         ne->from = src->second.get();
+                        ne->to = after->second.get();
                         dg.addEdge(ne.get());
                         edges.emplace_back(std::move(ne));
                     }
@@ -760,8 +763,8 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
                         {
                             //std::cout << srcIt->second->group << "  ->  " << refIt->second->group << std::endl;
                             auto ne = std::make_unique<intrusive::dg_edge<PluginDepNode>>();
-                            ne->from = refIt->second.get();
-                            ne->to = srcIt->second.get();
+                            ne->from = srcIt->second.get();
+                            ne->to = refIt->second.get();
                             dg.addEdge(ne.get());
                             edges.emplace_back(std::move(ne));
                         }
