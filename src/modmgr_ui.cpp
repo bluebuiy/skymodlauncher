@@ -1,6 +1,7 @@
 
 #include "modmgr.h"
 
+#define IMGUI_DEFINE_MATH_OPERATORS
 #include "imgui.h"
 #include "prochelper.h"
 #include "modmgr_collection_ui.h"
@@ -66,9 +67,9 @@ void LaunchShell(ModMgr& mgr)
 void RenderNewModDialog(ModMgr& mgr)
 {
     const auto dispSize = ImGui::GetIO().DisplaySize;
-    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetWorkCenter(), WINDOW_ALIGN_FLAG, ImVec2(0.5f, 0.5f));
-    ImGui::SetNextWindowSize(ImVec2(300, 200), WINDOW_ALIGN_FLAG);
-    if (ImGui::Begin("Add New Mod", &mgr.makingNewMod))
+    ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetWorkCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(300, 400), ImGuiCond_Appearing);
+    if (ImGui::Begin("Add New Mod", &mgr.modifyingManifest))
     {
         int currentItem = static_cast<int>(mgr.newMod.sourceType);
         if (ImGui::Combo("Type", &currentItem, "Empty\0Nexus\0NxmColBundle\0Direct\0Local\0"))
@@ -108,18 +109,41 @@ void RenderNewModDialog(ModMgr& mgr)
 
         ImGui::NewLine();
         ImGui::NewLine();
-        if (ImGui::Button("Submit"))
+        auto mmid = FindModManifest(mgr, mgr.newMod);
+
+        ImGui::BeginDisabled(mmid.id != 0);
+        if (mgr.modifiedManifest.id == 0)
         {
-            auto mmid = FindModManifest(mgr, mgr.newMod);
-            if (mmid.id != 0)
-            {
-                std::cout << "An identical mod manifest already exists!" << std::endl;
-            }
-            else
+            if (ImGui::Button("Submit"))
             {
                 CreateModManifest(mgr, mgr.newMod);
+                mgr.modifyingManifest = false;
             }
         }
+        else
+        {
+            if (ImGui::Button("Modify"))
+            {
+                auto mf = mgr.inst.modFileManifests.find(mgr.modifiedManifest);
+                if (mf != mgr.inst.modFileManifests.end())
+                {
+                    CopyManifestProperties(mgr.newMod, mf->second);
+                }
+                mgr.modifiedManifest = {};
+                mgr.modifyingManifest = false;
+            }
+        }
+        if (mmid.id == 0)
+        {
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+                ImGui::BeginTooltip();
+                ImGui::Text("No change would be made to the mamifest");
+                ImGui::EndTooltip();
+            }
+        }
+        ImGui::EndDisabled();
+
     }
     ImGui::End();
 }
@@ -406,113 +430,392 @@ void RenderTools(ModMgr& mgr)
 
 void RenderModDownloads(ModMgr& mgr)
 {
+    for (int i = 0; i < mgr.downloadSessions.size(); ++i)
+    {
+        auto mf = GetModManifest(mgr, mgr.downloadSessions[i].id);
+        if (mgr.dlSearch.empty() || mf && (mf->logicalName.find(mgr.dlSearch, 0) != std::string::npos || mf->name.find(mgr.dlSearch, 0) != std::string::npos))
+        {
+            ImGui::PushID(mgr.downloadSessions[i].id.id);
+
+            ImGui::PushStyleColor(ImGuiCol_Button, DELETE_COLOR);
+            if (ImGui::Button("X"))
+            {
+                mgr.downloadSessions[i].remove = true;
+            }
+            ImGui::SameLine();
+            if (mgr.downloadSessions[i].state == ModDlState::ModDownload)
+            {
+                if (ImGui::Button("||"))
+                {
+                    mgr.downloadSessions[i].pause = true;
+                }
+            }
+            else if (mgr.downloadSessions[i].state == ModDlState::ModPaused)
+            {
+                if (ImGui::Button(">"))
+                {
+                    mgr.downloadSessions[i].unpause = true;
+                }
+            }
+            ImGui::PopStyleColor(1);
+            ImGui::SameLine();
+            char const * state = "Unknown";
+            switch (mgr.downloadSessions[i].state)
+            {
+                case ModDlState::None:
+                {
+                    state = "Pending";
+                    break;
+                }
+                case ModDlState::UrlQuery:
+                {
+                    state = "Fetching Info";
+                    break;
+                }
+                
+                case ModDlState::Error:
+                {
+                    state = "Error";
+                    break;
+                }
+                case ModDlState::ModDownload:
+                {
+                    state = "Downloading";
+                    break;
+                }
+                case ModDlState::ModPaused:
+                {
+                    state = "Paused";
+                    break;
+                }
+                case ModDlState::Canceled:
+                {
+                    state = "Canceled";
+                    break;
+                }
+                case ModDlState::Complete:
+                {
+                    state = "Complete";
+                    break;
+                }
+            }
+            ImGui::Text("%-14s ", state);
+            bool doQuickInstall = false;
+            if (mgr.downloadSessions[i].state == ModDlState::Complete)
+            {
+                ImGui::SameLine();
+                doQuickInstall = ImGui::Button("Install");
+                if (ImGui::BeginItemTooltip())
+                {
+                    ImGui::Text("Extracts mod contents directly to the mod directory");
+                    ImGui::EndTooltip();
+                }
+            }
+            ImGui::SameLine();
+            auto mf = GetModManifest(mgr, mgr.downloadSessions[i].id);
+            ImGui::Text("%-64s", mf ? mf->logicalName.c_str() : mgr.downloadSessions[i].fileName.c_str());
+            ImGui::SameLine();
+            ImGui::Text(" ? ");
+            if (ImGui::BeginItemTooltip())
+            {
+                ImGui::Text("Unzips files into /Data, so that they are effectively at ${GAME_ROOT_DIR}/Data");
+                ImGui::EndTooltip();
+            }
+            if (doQuickInstall)
+            {
+                InstallMod(mgr, mgr.downloadSessions[i].id, {});
+            }
+
+            ImGui::PopID();
+        }
+    }
+}
+
+void RenderModManifests(ModMgr& mgr)
+{
+    ModId uninstallMod;
+    ModId installMod;
+    ModId deleteMod;
+    ModId modifyMod;
+
+    for (auto&& mod : mgr.inst.modFileManifests)
+    {
+        auto& mf = mod.second;
+        if (mgr.dlSearch.empty() || (mf.logicalName.find(mgr.dlSearch, 0) != std::string::npos || mf.name.find(mgr.dlSearch, 0) != std::string::npos))
+        {
+            ImGui::PushID(mod.first.id);
+
+            ImGui::Text("%-10s", EnumStr(mod.second.sourceType));
+            
+            ImGui::SameLine();
+            ImGui::Text("%-32s", mf.name.size() ? mf.name.c_str() : mf.logicalName.c_str());
+            
+            ImGui::SameLine();
+            if (ImGui::Button("Modify"))
+            {
+                modifyMod = mod.first;
+            }
+
+            if (mf.installInstances.empty())
+            {
+                ImGui::SameLine();
+                if (ImGui::Button("Install"))
+                {
+                    installMod = mod.first;
+                }
+            }
+            else
+            {
+                ImGui::SameLine();
+                if (ImGui::Button("Uninstall"))
+                {
+                    uninstallMod = mod.first;
+                }
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Button("Delete"))
+            {
+                deleteMod = mod.first;
+            }
+
+            ImGui::PopID();
+        }
+    }
+
+    if (installMod.id)
+    {
+        InstallMod(mgr, installMod, {});
+    }
+    if (uninstallMod.id)
+    {
+        UninstallMod(mgr, uninstallMod);
+    }
+    if (modifyMod.id)
+    {
+        mgr.modifyingManifest = true;
+        mgr.modifiedManifest = modifyMod;
+        CopyManifestProperties(mgr.inst.modFileManifests.find(modifyMod)->second, mgr.newMod);
+    }
+}
+
+void RenderModList2(ModMgr& mgr)
+{
     const auto dispSize = ImGui::GetIO().DisplaySize;
     ImGui::SetNextWindowPos(ImVec2(dispSize.x * 0.6f, 20), WINDOW_ALIGN_FLAG);
     ImGui::SetNextWindowSize(ImVec2(dispSize.x * 0.4f, dispSize.y - 20), WINDOW_ALIGN_FLAG);
     if (ImGui::Begin("Downloads"))
     {
         ImGui::InputText("Search", &mgr.dlSearch);
-        for (int i = 0; i < mgr.downloadSessions.size(); ++i)
+        if (mgr.modListType == false)
         {
-            auto mf = GetModManifest(mgr, mgr.downloadSessions[i].id);
-            if (mgr.dlSearch.empty() || mf && (mf->logicalName.find(mgr.dlSearch, 0) != std::string::npos || mf->name.find(mgr.dlSearch, 0) != std::string::npos))
-            {
-                ImGui::PushID(mgr.downloadSessions[i].id.id);
-
-                ImGui::PushStyleColor(ImGuiCol_Button, DELETE_COLOR);
-                if (ImGui::Button("X"))
-                {
-                    mgr.downloadSessions[i].remove = true;
-                }
-                ImGui::SameLine();
-                if (mgr.downloadSessions[i].state == ModDlState::ModDownload)
-                {
-                    if (ImGui::Button("||"))
-                    {
-                        mgr.downloadSessions[i].pause = true;
-                    }
-                }
-                else if (mgr.downloadSessions[i].state == ModDlState::ModPaused)
-                {
-                    if (ImGui::Button(">"))
-                    {
-                        mgr.downloadSessions[i].unpause = true;
-                    }
-                }
-                ImGui::PopStyleColor(1);
-                ImGui::SameLine();
-                char const * state = "Unknown";
-                switch (mgr.downloadSessions[i].state)
-                {
-                    case ModDlState::None:
-                    {
-                        state = "Pending";
-                        break;
-                    }
-                    case ModDlState::UrlQuery:
-                    {
-                        state = "Fetching Info";
-                        break;
-                    }
-                    
-                    case ModDlState::Error:
-                    {
-                        state = "Error";
-                        break;
-                    }
-                    case ModDlState::ModDownload:
-                    {
-                        state = "Downloading";
-                        break;
-                    }
-                    case ModDlState::ModPaused:
-                    {
-                        state = "Paused";
-                        break;
-                    }
-                    case ModDlState::Canceled:
-                    {
-                        state = "Canceled";
-                        break;
-                    }
-                    case ModDlState::Complete:
-                    {
-                        state = "Complete";
-                        break;
-                    }
-                }
-                ImGui::Text("%-14s ", state);
-                bool doQuickInstall = false;
-                if (mgr.downloadSessions[i].state == ModDlState::Complete)
-                {
-                    ImGui::SameLine();
-                    doQuickInstall = ImGui::Button("Install");
-                    if (ImGui::BeginItemTooltip())
-                    {
-                        ImGui::Text("Extracts mod contents directly to the mod directory");
-                        ImGui::EndTooltip();
-                    }
-                }
-                ImGui::SameLine();
-                auto mf = GetModManifest(mgr, mgr.downloadSessions[i].id);
-                ImGui::Text("%-64s", mf ? mf->logicalName.c_str() : mgr.downloadSessions[i].fileName.c_str());
-                ImGui::SameLine();
-                ImGui::Text(" ? ");
-                if (ImGui::BeginItemTooltip())
-                {
-                    ImGui::Text("Unzips files into /Data, so that they are effectively at ${GAME_ROOT_DIR}/Data");
-                    ImGui::EndTooltip();
-                }
-                if (doQuickInstall)
-                {
-                    InstallMod(mgr, mgr.downloadSessions[i].id, {});
-                }
-
-                ImGui::PopID();
-            }
+            RenderModDownloads(mgr);
+        }
+        else
+        {
+            RenderModManifests(mgr);
         }
     }
     ImGui::End();
+}
+
+
+struct ModSearchParams
+{
+    std::function<void(ModId)> before;
+    std::function<void(ModId)> after;
+    std::function<bool(ModId)> filter;
+};
+
+bool RenderModSearch(ModMgr& mgr, ModId& outId, ModSearchParams const & params)
+{
+    char const * mn = "(none)";
+    auto ms = mgr.inst.modFileManifests.find(mgr.modRuleSelected);
+    if (ms != mgr.inst.modFileManifests.end())
+    {
+        if (ms->second.name.empty())
+        {
+            mn = ms->second.logicalName.c_str();
+        }
+        else
+        {
+            mn = ms->second.name.c_str();
+        }
+    }
+    ImGui::Text("Currently selected: %s", mn);
+    ImGui::InputText("##Search", &mgr.sharedModSearch);
+    std::vector<ModId> modIds;
+    for (auto&& mf : mgr.inst.modFileManifests)
+    {
+        if ((params.filter && params.filter(mf.first)) && (
+            mf.second.name.find(mgr.sharedModSearch) != std::string::npos || mf.second.logicalName.find(mgr.sharedModSearch) != std::string::npos
+        ))
+        {
+            modIds.push_back(mf.first);
+        }
+    }
+    std::sort(modIds.begin(), modIds.end(), [&](ModId a, ModId b){
+        return mgr.inst.modFileManifests[a].name < mgr.inst.modFileManifests[b].name;
+    });
+
+    bool clicked = false;
+    ModId out;
+
+    ImGui::BeginChild("modrules", ImVec2(0, 300), ImGuiChildFlags_Borders);
+
+    for (int i = 0; i < modIds.size(); ++i)
+    {
+        ImGui::PushID(modIds[i].id);
+
+        if (params.before)
+            params.before(modIds[i]);
+
+        char const * mmnn = nullptr;
+        if (mgr.inst.modFileManifests[modIds[i]].name.empty())
+        {
+            mmnn = mgr.inst.modFileManifests[modIds[i]].logicalName.c_str();
+        }
+        else
+        {
+            mmnn = mgr.inst.modFileManifests[modIds[i]].name.c_str();
+        }
+
+        ImVec2 ts = ImGui::CalcTextSize(mmnn);
+        ImVec2 ext = ImGui::GetCursorScreenPos() + ts;
+        if (ImGui::IsMouseHoveringRect(ImGui::GetCursorScreenPos(), ext))
+        {
+            ImGui::GetWindowDrawList()->AddRectFilled(ImGui::GetCursorScreenPos(), ext, ImGui::ColorConvertFloat4ToU32(ImVec4(1,1,1,0.1)));
+        }
+
+        ImGui::Text("%s", mmnn);
+        if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left))
+        {
+            clicked = true;
+            out = modIds[i];
+        }
+
+        if (params.after)
+            params.after(modIds[i]);
+
+        ImGui::PopID();
+    }
+
+    ImGui::EndChild();
+
+    if (clicked)
+    {
+        outId = out;
+    }
+    return clicked;
+}
+
+void RenderModRules(ModMgr& mgr)
+{
+    if (mgr.openCustomModRules)
+    {
+        mgr.openCustomModRules = false;
+        ImGui::OpenPopup("CustomModRules");
+    }
+
+    bool open = true;
+    if (ImGui::BeginPopupModal("Mod Rules###CustomModRules", &open))
+    {
+        if (!open)
+        {
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::Checkbox("Hide unrelated", &mgr.filterModRuleRelatives);
+        ImGui::SameLine();
+        ImGui::Checkbox("Show floating", &mgr.filterModRuleFloating);
+        ModId o;
+        std::vector<ModId> before;
+        std::vector<ModId> after;
+        mgr.inst.modRules.GetRulesForMod(mgr.modRuleSelected, before, after);
+        ModSearchParams params;
+        params.before = [&](ModId m) mutable {
+            
+            auto bi = std::find(before.begin(), before.end(), m);
+            auto ai = std::find(after.begin(), after.end(), m);
+
+            bool b = bi != before.end();
+            bool a = ai != after.end();
+
+            ImGui::BeginDisabled(m == mgr.modRuleSelected);
+            if (ImGui::Checkbox("Before", &b))
+            {
+                if (b)
+                {
+                    mgr.inst.modRules.AddRule(m, mgr.modRuleSelected);
+                }
+                else
+                {
+                    mgr.inst.modRules.RemoveRule(m, mgr.modRuleSelected);
+                }
+            }
+            if (ImGui::BeginItemTooltip())
+            {
+                ImGui::Text("This mod loads before the selected mod");
+                ImGui::EndTooltip();
+            }
+
+            ImGui::SameLine();
+            if (ImGui::Checkbox("After", &a))
+            {
+                if (a)
+                {
+                    mgr.inst.modRules.AddRule(mgr.modRuleSelected, m);
+                }
+                else
+                {
+                    mgr.inst.modRules.RemoveRule(mgr.modRuleSelected, m);
+                }
+            }
+            if (ImGui::BeginItemTooltip())
+            {
+                ImGui::Text("This mod loads after the selected mod");
+                ImGui::EndTooltip();
+            }
+            ImGui::EndDisabled();
+            ImGui::SameLine();
+
+        };
+        params.filter = [&](ModId id) {
+            bool result = true;
+
+
+            // does not exclude the currently selected mod, if it has rules.
+            if (mgr.filterModRuleRelatives)
+            {
+                if (std::find(before.begin(), before.end(), id) == before.end() && std::find(after.begin(), after.end(), id) == after.end())
+                {
+                    return false;
+                }
+            }
+
+            if (mgr.filterModRuleFloating)
+            {
+                std::vector<ModId> a, b;
+                mgr.inst.modRules.GetRulesForMod(id, a, b);
+                if (!a.empty() || !b.empty())
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        };
+        if (RenderModSearch(mgr, o, params))
+        {
+            mgr.modRuleSelected = o;
+        }
+
+        if (ImGui::Button("Apply load rules"))
+        {
+            ApplyModLoadRules(mgr);
+        }
+
+        ImGui::EndPopup();
+    }
 }
 
 void RenderModMgr(ModMgr& mgr)
@@ -534,6 +837,26 @@ void RenderModMgr(ModMgr& mgr)
         if (ImGui::Button("Collection"))
         {
             mgr.openCollectionInput = true;
+        }
+
+        if (ImGui::BeginMenu("Rules"))
+        {
+            if (ImGui::MenuItem("Mod Rules"))
+            {
+                mgr.openCustomModRules = true;
+            }
+            if (ImGui::MenuItem("Plugin Rules"))
+            {
+                mgr.openCustomPluginRules = true;
+            }
+            ImGui::EndMenu();
+        }
+
+        if (ImGui::BeginMenu("Right List"))
+        {
+            if (ImGui::RadioButton("Downloads", mgr.modListType == false)) { mgr.modListType = false; }
+            if (ImGui::RadioButton("Manifests", mgr.modListType == true)) { mgr.modListType = true; }
+            ImGui::EndMenu();
         }
 /*
         if (ImGui::Button("Reset layout"))
@@ -565,7 +888,7 @@ void RenderModMgr(ModMgr& mgr)
 
         if (ImGui::Button("Add Mod"))
         {
-            mgr.makingNewMod = true;
+            mgr.modifyingManifest = true;
         }
 
         ImGui::Text("Sort order");
@@ -787,7 +1110,7 @@ void RenderModMgr(ModMgr& mgr)
         ImGui::Separator();
         if (del != -1)
         {
-            DeleteMod(mgr, modList[del]);
+            UninstallMod(mgr, modList[del]);
             CorrectLoadIndexes(mgr);
             SaveModMgr(mgr);
         }
@@ -828,11 +1151,12 @@ void RenderModMgr(ModMgr& mgr)
     ImGui::End();
 
     RenderPluginsList(mgr);
-    RenderModDownloads(mgr);
+    RenderModList2(mgr);
     RenderFomod(mgr);
     RenderCollectionWindow(mgr);
+    RenderModRules(mgr);
 
-    if (mgr.makingNewMod)
+    if (mgr.modifyingManifest)
     {
         RenderNewModDialog(mgr);
     }

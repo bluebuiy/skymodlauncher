@@ -89,6 +89,8 @@ namespace nlohmann
         JPUT(j, mi, modFileManifests);
         JPUT(j, mi, modInstalls);
         JPUT(j, mi, idCounter);
+        JPUT(j, mi, modRulesRaw);
+        JPUT(j, mi, pluginRulesRaw);
     }
 
     void adl_serializer<ModMgrInst>::from_json(json const & j, ModMgrInst& mi)
@@ -102,6 +104,8 @@ namespace nlohmann
         JPULL(j, mi, modFileManifests);
         JPULL(j, mi, modInstalls);
         JPULL(j, mi, idCounter);
+        JPULL(j, mi, modRulesRaw);
+        JPULL(j, mi, pluginRulesRaw);
     }
     
     void adl_serializer<ModExec>::to_json(json& j, ModExec const & me)
@@ -253,6 +257,30 @@ namespace nlohmann
         JPULL(j, cv, modInstance);
         JPULL(j, cv, installMessages);
         JPULL(j, cv, ok);
+    }
+
+    void adl_serializer<ModLoadRule>::to_json(json& j, ModLoadRule const & cv)
+    {
+        JPUT(j, cv, before);
+        JPUT(j, cv, after);
+    }
+
+    void adl_serializer<ModLoadRule>::from_json(json const & j, ModLoadRule& cv)
+    {
+        JPULL(j, cv, before);
+        JPULL(j, cv, after);
+    }
+
+    void adl_serializer<PluginLoadRule>::to_json(json& j, PluginLoadRule const & cv)
+    {
+        JPUT(j, cv, before);
+        JPUT(j, cv, after);
+    }
+
+    void adl_serializer<PluginLoadRule>::from_json(json const & j, PluginLoadRule& cv)
+    {
+        JPULL(j, cv, before);
+        JPULL(j, cv, after);
     }
 
 }

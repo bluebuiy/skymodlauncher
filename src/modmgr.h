@@ -10,6 +10,7 @@
 #include "fomodauto.h"
 #include "enums.h"
 #include "mod.h"
+#include "intrusive/dg.h"
 
 #include <vector>
 #include <string>
@@ -72,6 +73,75 @@ struct CustomVariable
     std::string value;
 };
 
+struct ModRuleWrapper
+{
+    // the same data, just one is a->b and one is b<-a
+    std::unordered_map<ModId, std::vector<ModId>> aThenB;
+    std::unordered_map<ModId, std::vector<ModId>> bBeforeA;
+
+    void GetRulesForMod(ModId m, std::vector<ModId> & before, std::vector<ModId> & after)
+    {
+        before.clear();
+        after.clear();
+
+        auto ai = aThenB.find(m);
+        if (ai != aThenB.end())
+        {
+            after = ai->second;
+        }
+
+        auto bi = bBeforeA.find(m);
+        if (bi != bBeforeA.end())
+        {
+            before = bi->second;
+        }
+    }
+
+    // a then b
+    void AddRule(ModId a, ModId b)
+    {
+        auto it = aThenB.emplace(a, std::vector<ModId>{});
+        it.first->second.push_back(b);
+
+        auto it2 = bBeforeA.emplace(b, std::vector<ModId>{});
+        it2.first->second.push_back(a);
+    }
+
+    // a then b
+    void RemoveRule(ModId a, ModId b)
+    {
+        auto it = aThenB.find(a);
+        if (it != aThenB.end())
+        {
+            auto rmi = std::remove(it->second.begin(), it->second.end(), b);
+            if (rmi != it->second.end())
+            {
+                it->second.erase(rmi);
+            }
+        }
+
+        auto it2 = bBeforeA.find(b);
+        if (it2 != bBeforeA.end())
+        {
+            auto rmi = std::remove(it2->second.begin(), it2->second.end(), a);
+            if (rmi != it2->second.end())
+            {
+                it2->second.erase(rmi);
+            }
+        }
+
+        if (it != aThenB.end() && it->second.empty())
+        {
+            aThenB.erase(it);
+        }
+        if (it2 != bBeforeA.end() && it2->second.empty())
+        {
+            bBeforeA.erase(it2);
+        }
+    }
+
+};
+
 struct ModMgrInst
 {
     static constexpr int VERSION = 2;
@@ -90,6 +160,11 @@ struct ModMgrInst
     std::optional<NxmCollection> collection;
 
     std::vector<ModDownload> downloads;
+
+    ModRuleWrapper modRules;
+
+    std::vector<ModLoadRule> modRulesRaw;
+    std::vector<PluginLoadRule> pluginRulesRaw;
 
     int idCounter = 0;
 };
@@ -142,13 +217,22 @@ struct ModMgr
     bool enableRemove = false;
     int sortMode = 0;
     bool enableSetOk = false;
-    bool makingNewMod = false;
+    bool modifyingManifest = false;
+    ModId modifiedManifest;
     bool settingsOpen = false;
     bool foundSkyrimExe = false;
     bool foundSkyrimIni = false;
     bool openCollectionInput = false;
+    bool openCustomModRules = false;
+    bool openCustomPluginRules = false;
     std::string modSearch;
     std::string dlSearch;
+    std::string sharedModSearch;
+    bool filterModRuleRelatives = false;
+    bool filterModRuleFloating = false;
+    ModId modRuleSelected;
+
+    bool modListType = false;
 
     ModManifest newMod;
 
@@ -169,6 +253,12 @@ struct ModMgr
 
 };
 
+struct ModDepNode
+{
+    intrusive::dg_inject<ModDepNode> dg;
+    ModInstallId mod;
+    std::string name;
+};
 
 std::vector<ModId> GetModList(ModMgr& mgr);
 std::optional<ModManifest> GetModManifest(ModMgr& mgr, ModId id);
@@ -226,7 +316,7 @@ void InitializeIndependentDownload(ModMgr& mgr, ModId id);
 
 void UpdateDownloads(ModMgr& mgr);
 
-void DeleteMod(ModMgr& mgr, ModId id);
+void UninstallMod(ModMgr& mgr, ModId id);
 
 void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collection);
 
@@ -234,6 +324,9 @@ void InitMgr(ModMgr& mgr);
 void CleanupMgr(ModMgr& mgr);
 
 
+void ApplyModLoadRules(ModMgr& mgr);
+
+void CopyManifestProperties(ModManifest const & src, ModManifest & dst);
 
 std::string NormalizePath(std::string const & str);
 

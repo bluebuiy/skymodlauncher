@@ -31,3 +31,8 @@ enum class ModDlState
     Complete,
     Canceled,
 };
+
+
+char const * EnumStr(FileSource fs);
+
+

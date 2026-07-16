@@ -91,6 +91,8 @@ target_sources(skymodlaunch
         src/curlasync.cpp
         src/asyncproc.h
         src/asyncproc.cpp
+        src/enums.h
+        src/enums.cpp
 )
 
 target_link_libraries(skymodlaunch

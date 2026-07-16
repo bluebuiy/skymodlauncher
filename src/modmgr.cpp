@@ -150,6 +150,30 @@ ModDownloadRt MdrtFromMd(ModDownload const & md)
     return ret;
 }
 
+void ModRulesToRaw(ModMgr& mgr)
+{
+    mgr.inst.modRulesRaw.clear();
+
+    for (auto&& rule : mgr.inst.modRules.aThenB)
+    {
+        for(auto&& b : rule.second)
+        {
+            mgr.inst.modRulesRaw.emplace_back(ModLoadRule{rule.first, b});
+        }
+    }
+}
+
+void ModRulesFromRaw(ModMgr& mgr)
+{
+    mgr.inst.modRules.aThenB.clear();
+    mgr.inst.modRules.bBeforeA.clear();
+
+    for (auto&& rule : mgr.inst.modRulesRaw)
+    {
+        mgr.inst.modRules.AddRule(rule.before, rule.after);
+    }
+}
+
 void SaveModMgr(ModMgr& mgr)
 {
     if (mgr.config.configPath.empty())
@@ -190,6 +214,8 @@ void SaveModMgr(ModMgr& mgr)
             mgr.inst.downloads.emplace_back(MdFromRt(mdrt));
         }
     }
+
+    ModRulesToRaw(mgr);
 
     instfile << nlohmann::json(mgr.inst);
     instfile.close();
@@ -352,6 +378,7 @@ bool LoadModMgr(ModMgr& mgr, std::string const& filePath, bool createNew)
             {
                 mgr.downloadSessions.emplace_back(MdrtFromMd(md));
             }
+            ModRulesFromRaw(mgr);
         }
         DiscoverPlugins(mgr);
     }
@@ -1841,7 +1868,11 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
             }
         }
 
-        if (manifest->sourceType != FileSource::CollectionBundle && (isFomod && collection))
+        bool preserveSource = 
+            manifest->sourceType == FileSource::CollectionBundle ||
+            isFomod && !collection;
+
+        if (!preserveSource)
         {
             // remove staging
             std::vector<std::string> rmCmd = {
@@ -1886,7 +1917,7 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
     }
 }
 
-void DeleteMod(ModMgr& mgr, ModId id)
+void UninstallMod(ModMgr& mgr, ModId id)
 {
     auto manifest = GetModManifest(mgr, id);
 
@@ -1981,3 +2012,116 @@ CurlTask CreateNxmApiQuery(ModMgr& mgr, std::string const & url, std::function<v
 
     return task;
 }
+
+void CopyManifestProperties(ModManifest const & src, ModManifest & dst)
+{
+    dst.sourceType = src.sourceType;
+    dst.nxmModId = src.nxmModId;
+    dst.nxmFileId = src.nxmFileId;
+    dst.nxmDomain = src.nxmDomain;
+    dst.nxmColSlug = src.nxmColSlug;
+    dst.nxmColRev = src.nxmColRev;
+    dst.nxmColBundleFile = src.nxmColBundleFile;
+    dst.version = src.version;
+    dst.url = src.url;
+    dst.path = src.path;
+    dst.name = src.name;
+    dst.logicalName = src.logicalName;
+}
+
+
+void ApplyModLoadRules(ModMgr& mgr)
+{
+    std::vector<ModDepNode> nodes;
+    intrusive::directed_graph<ModDepNode, &ModDepNode::dg> dg;
+    std::vector<std::unique_ptr<intrusive::dg_edge<ModDepNode>>> edges;
+
+    for (auto &&mod : mgr.inst.modInstalls)
+    {
+        ModDepNode &dn = nodes.emplace_back();
+        dn.name = mod.second.name;
+        dn.mod = mod.first;
+    }
+
+    for (auto&& node : nodes)
+    {
+        dg.add(&node);
+    }
+
+    for (auto&& rule : mgr.inst.modRules.aThenB)
+    {
+        auto srcMf = mgr.inst.modFileManifests.find(rule.first);
+        if (!srcMf->second.installInstances.empty())
+        {
+            auto srcNode = std::find_if(nodes.begin(), nodes.end(), [&](ModDepNode const & n){
+                return n.mod == srcMf->second.installInstances[0];
+            });
+            if (srcNode != nodes.end())
+            {
+                auto srcInst = mgr.inst.modInstalls.find(srcMf->second.installInstances[0]);
+                if (srcInst != mgr.inst.modInstalls.end())
+                {
+                    for (auto&& b : rule.second)
+                    {
+                        auto dstMf = mgr.inst.modFileManifests.find(b);
+                        if (!dstMf->second.installInstances.empty())
+                        {
+                            auto dstInst = mgr.inst.modInstalls.find(dstMf->second.installInstances[0]);
+                            if (dstInst != mgr.inst.modInstalls.end())
+                            {
+                                auto dstNode = std::find_if(nodes.begin(), nodes.end(), [&](ModDepNode const & n){
+                                    return n.mod == dstInst->first;
+                                });
+
+                                if (dstNode != nodes.end())
+                                {
+                                    auto ruleNode = std::make_unique<intrusive::dg_edge<ModDepNode>>();
+                                    ruleNode->from = &*srcNode;
+                                    ruleNode->to = &*dstNode;
+                                    dg.addEdge(ruleNode.get());
+                                    edges.emplace_back(std::move(ruleNode));
+                                }
+                                else
+                                {
+                                    std::cout << "Failed to find dep node for custom rule" << std::endl;
+                                }
+
+                            }
+                        }
+                    }
+                }
+            }
+            else
+            {
+                std::cout << "Failed to find dep node for custom rule" << std::endl;
+            }
+        }
+    }
+
+    decltype(dg)::node_list list;
+    bool r = dg.topo_sort(list);
+
+    if (!r)
+    {
+        std::cout << "Failed to apply mod load rules" << std::endl;
+        return;
+    }
+
+    int i = 0;
+    ModDepNode* n = list.head;
+    while (n)
+    {
+        auto mii = mgr.inst.modInstalls.find(n->mod);
+        if (mii != mgr.inst.modInstalls.end())
+        {
+            mii->second.loadIndex = i;
+            ++i;
+        }
+        else
+        {
+            std::cout << "Failed to set load index " << i << " for " << n->name;
+        }
+        n = list.resolve(n)->right;
+    }
+}
+

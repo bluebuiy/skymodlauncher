@@ -169,19 +169,18 @@ struct NxmCollectionData
     nlohmann::json jdata;
 };
 
-
-
-template <typename Ref, typename Data>
-struct BundledRef : public Data
+struct ModLoadRule
 {
-    BundledRef(Ref rid, Data const & data)
-      : Data(data)
-    {}
-
-    Ref id;
+    // before < after
+    ModId before;
+    ModId after;
 };
 
-
+struct PluginLoadRule
+{
+    std::string before;
+    std::string after;
+};
 
  
 

@@ -483,13 +483,6 @@ void UpdateInstallCollectionMods(ModMgr &mgr)
     InstallMod(mgr, it->first, mgr.inst.collection->url);
 }
 
-struct ModDepNode
-{
-    intrusive::dg_inject<ModDepNode> dg;
-    ModInstallId mod;
-    std::string name;
-};
-
 struct PluginDepNode
 {
     std::string group;
@@ -595,6 +588,56 @@ void ApplyCollectionLoadOrder(ModMgr &mgr)
                 edge->to = &*refIt;
                 dg.addEdge(edge.get());
                 edges.emplace_back(std::move(edge));
+            }
+        }
+
+        for (auto&& rule : mgr.inst.modRules.aThenB)
+        {
+            auto srcMf = mgr.inst.modFileManifests.find(rule.first);
+            if (!srcMf->second.installInstances.empty())
+            {
+                auto srcNode = std::find_if(nodes.begin(), nodes.end(), [&](ModDepNode const & n){
+                    return n.mod == srcMf->second.installInstances[0];
+                });
+                if (srcNode != nodes.end())
+                {
+                    auto srcInst = mgr.inst.modInstalls.find(srcMf->second.installInstances[0]);
+                    if (srcInst != mgr.inst.modInstalls.end())
+                    {
+                        for (auto&& b : rule.second)
+                        {
+                            auto dstMf = mgr.inst.modFileManifests.find(b);
+                            if (!dstMf->second.installInstances.empty())
+                            {
+                                auto dstInst = mgr.inst.modInstalls.find(dstMf->second.installInstances[0]);
+                                if (dstInst != mgr.inst.modInstalls.end())
+                                {
+                                    auto dstNode = std::find_if(nodes.begin(), nodes.end(), [&](ModDepNode const & n){
+                                        return n.mod == dstInst->first;
+                                    });
+
+                                    if (dstNode != nodes.end())
+                                    {
+                                        auto ruleNode = std::make_unique<intrusive::dg_edge<ModDepNode>>();
+                                        ruleNode->from = &*srcNode;
+                                        ruleNode->to = &*dstNode;
+                                        dg.addEdge(ruleNode.get());
+                                        edges.emplace_back(std::move(ruleNode));
+                                    }
+                                    else
+                                    {
+                                        std::cout << "Failed to find dep node for custom rule" << std::endl;
+                                    }
+
+                                }
+                            }
+                        }
+                    }
+                }
+                else
+                {
+                    std::cout << "Failed to find dep node for custom rule" << std::endl;
+                }
             }
         }
 

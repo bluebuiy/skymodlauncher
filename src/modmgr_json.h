@@ -159,6 +159,22 @@ namespace nlohmann
         
         static void from_json(json const & j, ModInstall & cfg);
     };
+
+    template <>
+    struct adl_serializer<ModLoadRule>
+    {
+        static void to_json(json& j, ModLoadRule const & cfg);
+        
+        static void from_json(json const & j, ModLoadRule & cfg);
+    };
+
+    template <>
+    struct adl_serializer<PluginLoadRule>
+    {
+        static void to_json(json& j, PluginLoadRule const & cfg);
+        
+        static void from_json(json const & j, PluginLoadRule & cfg);
+    };
 }
 
 
