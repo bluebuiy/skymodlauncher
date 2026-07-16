@@ -66,7 +66,7 @@ ModId FindModManifest(ModMgr& mgr, ModManifest const & mft)
             {
                 return mf.first;
             }
-            else if (mfi.sourceType == FileSource::Nexus && mfi.nxmFileId == mft.nxmFileId && mfi.nxmModId == mft.nxmModId)
+            else if (mfi.sourceType == FileSource::Nexus && mfi.nxmFileId == mft.nxmFileId && mfi.nxmModId == mft.nxmModId && mfi.nxmDomain == mft.nxmDomain)
             {
                 return mf.first;
             }

@@ -1003,6 +1003,10 @@ void InitializeNXMModDownload2(ModMgr& mgr, ModId id)
     {
         return;
     }
+    if (mf->sourceType != FileSource::Nexus)
+    {
+        return;
+    }
 
     ModUrlFinished taskFinished;
     taskFinished.mgr = &mgr;
@@ -1032,6 +1036,10 @@ void InitializeIndependentDownload(ModMgr& mgr, ModId id)
         return dl.id == id;
     });
     if (dl != mgr.downloadSessions.end())
+    {
+        return;
+    }
+    if (mf->sourceType != FileSource::Independent)
     {
         return;
     }
@@ -1919,19 +1927,19 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
 
 void UninstallMod(ModMgr& mgr, ModId id)
 {
-    auto manifest = GetModManifest(mgr, id);
+    auto manifest = mgr.inst.modFileManifests.find(id);
 
-    if (!manifest)
+    if (manifest == mgr.inst.modFileManifests.end())
     {
         return;
     }
 
-    if (manifest->installInstances.size() == 0)
+    if (manifest->second.installInstances.size() == 0)
     {
         return;
     }
 
-    auto install = GetModInstall(mgr, manifest->installInstances[0]);
+    auto install = GetModInstall(mgr, manifest->second.installInstances[0]);
     if (install)
     {
         std::filesystem::path path = std::filesystem::path(*WordExpand(mgr.config.modFolder)) / install->installDir;
@@ -1945,8 +1953,8 @@ void UninstallMod(ModMgr& mgr, ModId id)
         LaunchProc(args, "/");
     }
 
-    mgr.inst.modInstalls.erase(manifest->installInstances[0]);
-    manifest->installInstances.erase(manifest->installInstances.begin());
+    mgr.inst.modInstalls.erase(manifest->second.installInstances[0]);
+    manifest->second.installInstances.erase(manifest->second.installInstances.begin());
 }
 
 void InitMgr(ModMgr& mgr)
@@ -2027,6 +2035,7 @@ void CopyManifestProperties(ModManifest const & src, ModManifest & dst)
     dst.path = src.path;
     dst.name = src.name;
     dst.logicalName = src.logicalName;
+    dst.installType = src.installType;
 }
 
 

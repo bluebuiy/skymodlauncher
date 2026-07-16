@@ -90,6 +90,7 @@ void RenderNewModDialog(ModMgr& mgr)
             ImGui::InputInt("modId", &mgr.newMod.nxmModId, -1);
             ImGui::InputInt("fileId", &mgr.newMod.nxmFileId, -1);
             ImGui::InputText("version", &mgr.newMod.version);
+            ImGui::InputText("Domain/Game", &mgr.newMod.nxmDomain);
         }
         else if (mgr.newMod.sourceType == FileSource::CollectionBundle)
         {
@@ -558,6 +559,27 @@ void RenderModManifests(ModMgr& mgr)
 
             if (mf.installInstances.empty())
             {
+                if (mf.sourceType == FileSource::Nexus || mf.sourceType == FileSource::Independent)
+                {
+                    ImGui::SameLine();
+                    if (ImGui::Button("Download"))
+                    {
+                        auto it = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const &dl) {
+                            return dl.id == mod.first;
+                        });
+                        if (it == mgr.downloadSessions.end())
+                        {
+                            if (mf.sourceType == FileSource::Nexus)
+                            {
+                                InitializeNXMModDownload2(mgr, mod.first);
+                            }
+                            else if (mf.sourceType == FileSource::Independent)
+                            {
+                                InitializeIndependentDownload(mgr, mod.first);
+                            }
+                        }
+                    }
+                }
                 ImGui::SameLine();
                 if (ImGui::Button("Install"))
                 {
@@ -889,6 +911,8 @@ void RenderModMgr(ModMgr& mgr)
         if (ImGui::Button("Add Mod"))
         {
             mgr.modifyingManifest = true;
+            mgr.modifiedManifest = {};
+            mgr.newMod = {};
         }
 
         ImGui::Text("Sort order");
