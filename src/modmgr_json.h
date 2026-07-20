@@ -17,8 +17,9 @@ NLOHMANN_JSON_SERIALIZE_ENUM(FileSource, {
     {FileSource::Unknown, "Unknown"},
     {FileSource::Nexus, "Nexus"},
     {FileSource::Independent, "Independent"},
-    {FileSource::Manual, "Manual"},
+    {FileSource::Local, "Local"},
     {FileSource::CollectionBundle, "CollectionBundle"},
+    {FileSource::Empty, "Empty"},
 })
 
 NLOHMANN_JSON_SERIALIZE_ENUM(ModDlState, {

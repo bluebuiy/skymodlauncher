@@ -72,7 +72,7 @@ void RenderNewModDialog(ModMgr& mgr)
     if (ImGui::Begin("Add New Mod", &mgr.modifyingManifest))
     {
         int currentItem = static_cast<int>(mgr.newMod.sourceType);
-        if (ImGui::Combo("Type", &currentItem, "Empty\0Nexus\0NxmColBundle\0Direct\0Local\0"))
+        if (ImGui::Combo("Type", &currentItem, "Unknown\0Nexus\0NxmColBundle\0Direct\0Local\0Empty\0"))
         {
             mgr.newMod.sourceType = static_cast<FileSource>(currentItem);
         }
@@ -99,20 +99,23 @@ void RenderNewModDialog(ModMgr& mgr)
         }
         else if (mgr.newMod.sourceType == FileSource::Independent)
         {
-            ImGui::TextColored(ImVec4(1,0,0,1), "NOT IMPLEMENTED!");
             ImGui::InputText("download url", &mgr.newMod.url);
         }
-        else if (mgr.newMod.sourceType == FileSource::Manual)
+        else if (mgr.newMod.sourceType == FileSource::Local)
         {
-            ImGui::TextColored(ImVec4(1,0,0,1), "NOT IMPLEMENTED!");
             ImGui::InputText("Path", &mgr.newMod.path);
+        }
+        else if (mgr.newMod.sourceType == FileSource::Empty)
+        {
+
         }
 
         ImGui::NewLine();
         ImGui::NewLine();
         auto mmid = FindModManifest(mgr, mgr.newMod);
-
-        ImGui::BeginDisabled(mmid.id != 0);
+        bool conflicts = mgr.modifiedManifest.id != 0 && mmid != mgr.modifiedManifest && mmid.id != 0 || (mgr.modifiedManifest.id == 0 && mmid.id != 0);
+        bool same = mgr.modifiedManifest.id != 0 && mgr.modifiedManifest == mmid;
+        ImGui::BeginDisabled(conflicts);
         if (mgr.modifiedManifest.id == 0)
         {
             if (ImGui::Button("Submit"))
@@ -134,12 +137,21 @@ void RenderNewModDialog(ModMgr& mgr)
                 mgr.modifyingManifest = false;
             }
         }
-        if (mmid.id == 0)
+        if (conflicts)
         {
             if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
             {
                 ImGui::BeginTooltip();
-                ImGui::Text("No change would be made to the mamifest");
+                ImGui::Text("This manifest conflicts with an existing manifest.");
+                ImGui::EndTooltip();
+            }
+        }
+        else if (same)
+        {
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+                ImGui::BeginTooltip();
+                ImGui::Text("No changes");
                 ImGui::EndTooltip();
             }
         }
@@ -618,6 +630,10 @@ void RenderModManifests(ModMgr& mgr)
         mgr.modifyingManifest = true;
         mgr.modifiedManifest = modifyMod;
         CopyManifestProperties(mgr.inst.modFileManifests.find(modifyMod)->second, mgr.newMod);
+    }
+    if (deleteMod.id)
+    {
+        DeleteMod(mgr, deleteMod);
     }
 }
 

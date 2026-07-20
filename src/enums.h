@@ -17,8 +17,10 @@ enum class FileSource
     CollectionBundle,
     // downloaded from non-nexus source
     Independent,
-    // added through manual submission
-    Manual
+    // Local archive sourced from a file path
+    Local,
+    // No archive source, files added manualy
+    Empty,
 };
 
 enum class ModDlState

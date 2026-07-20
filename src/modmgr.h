@@ -320,6 +320,8 @@ void UninstallMod(ModMgr& mgr, ModId id);
 
 void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collection);
 
+void DeleteMod(ModMgr& mgr, ModId id);
+
 void InitMgr(ModMgr& mgr);
 void CleanupMgr(ModMgr& mgr);
 

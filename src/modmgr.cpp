@@ -1502,7 +1502,7 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
         staging = mgr.config.projectDir / ".mod_staging" / stem;
         archive = mgr.config.projectDir / "download" / dl->fileName;
     }
-    else if (manifest->sourceType == FileSource::Manual)
+    else if (manifest->sourceType == FileSource::Local)
     {
         std::string stem = std::filesystem::path(manifest->name).stem();
         modFileName = manifest->name;
@@ -1516,6 +1516,10 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
         {
             return;
         }
+    }
+    else if (manifest->sourceType == FileSource::Empty)
+    {
+        modFileName = manifest->logicalName;
     }
 
     ModInstall inst;
@@ -1535,7 +1539,7 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
             return;
         }
 
-        if (!std::filesystem::is_directory(staging))
+        if (manifest->sourceType != FileSource::Empty && !std::filesystem::is_directory(staging))
         {
             std::cout << "No directory with mod contents in staging directory" << std::endl;
             AddInstallMessage(*mgr, installId, std::format("Mod contents not present in staging directory {}", staging.c_str()));
@@ -1543,9 +1547,24 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
             return;
         }
 
+        auto iit = mgr->inst.modInstalls.find(installId);
+
+        if (iit == mgr->inst.modInstalls.end())
+        {
+            std::cout << "Invalid install id" << std::endl;
+            return;
+        }
+
         std::filesystem::path modFolder = *WordExpand(mgr->config.modFolder);
         std::filesystem::path installDest = modFolder / modFileName;
         std::filesystem::create_directories(installDest);
+
+
+        if (manifest->sourceType == FileSource::Empty)
+        {
+            iit->second.ok = true;
+            return;
+        }
 
         std::filesystem::path fomodPath;
         std::filesystem::path realModRoot;
@@ -1555,10 +1574,10 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
 
         bool confGood = true;
         bool isFomod = false;
+        bool hasFomod = false;
         
         if (mgr->inst.collection)
         {
-            // this is not optimal but whatever
             for (auto&& md : mgr->inst.collection->bundleDefinition["mods"])
             {
                 if (md["name"].get<std::string>() == manifest->name)
@@ -1606,18 +1625,17 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
                     break;
                 }
             }
-            isFomod = fomodConfig.has_value() && FindFomod(staging, fomodPath, realModRoot);
+            hasFomod = FindFomod(staging, fomodPath, realModRoot);
+            isFomod = fomodConfig.has_value() && hasFomod;
+            if (hasFomod && !manualConfig && !fomodConfig)
+            {
+                std::cout << "Mod " << manifest->logicalName << " has fomod, but does not have fomod choices configured" << std::endl;
+                AddInstallMessage(*mgr, installId, "Has fomod, but does not have fomod choices configured");
+            }
         }
         else
         {
             isFomod = FindFomod(staging, fomodPath, realModRoot);
-        }
-
-        auto iit = mgr->inst.modInstalls.find(installId);
-
-        if (iit == mgr->inst.modInstalls.end())
-        {
-            return;
         }
 
         if (manualConfig.has_value())
@@ -1682,6 +1700,11 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
                 //mgr->collection.error = true;
                 //mgr->collection.installErrorInfo.push_back(fileStem);
             }
+        }
+        else if (collection && hasFomod && !manualConfig && !fomodConfig)
+        {
+            std::cout << "Mod " << manifest->logicalName << " has fomod, but does not have fomod choices configured" << std::endl;
+            AddInstallMessage(*mgr, installId, "Has fomod, but does not have fomod choices configured. Failed to instsall.");
         }
         else if (isFomod && collection)
         {
@@ -1914,13 +1937,19 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
         mgr.cookingInstall = task;
         task.Start(mgr.processEngine);
     }
-    else if (manifest->sourceType == FileSource::Manual)
+    else if (manifest->sourceType == FileSource::Local)
     {
-        std::cout << "!!!!!! Manual manifest not implemented" << std::endl;
+        auto task = UnzipFile(archive, staging, std::move(installAction));
+        mgr.cookingInstall = task;
+        task.Start(mgr.processEngine);
     }
     else if (manifest->sourceType == FileSource::CollectionBundle)
     {
         // bundled mods are already unpacked
+        installAction(true);
+    }
+    else if (manifest->sourceType == FileSource::Empty)
+    {
         installAction(true);
     }
 }
@@ -1955,6 +1984,42 @@ void UninstallMod(ModMgr& mgr, ModId id)
 
     mgr.inst.modInstalls.erase(manifest->second.installInstances[0]);
     manifest->second.installInstances.erase(manifest->second.installInstances.begin());
+}
+
+void DeleteMod(ModMgr& mgr, ModId id)
+{
+    auto i = mgr.inst.modFileManifests.find(id);
+    if (i != mgr.inst.modFileManifests.end() && i->second.installInstances.size() > 0)
+    {
+        std::cout << "Cannot delete installed mod" << std::endl;
+        return;
+    }
+
+    auto dl = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & mdl) {
+        return mdl.id == id;
+    });
+
+    if (dl != mgr.downloadSessions.end())
+    {
+        std::cout << "Cannot delete downloading mod" << std::endl;
+        return;
+    }
+
+    std::vector<ModId> bef, aft;
+    mgr.inst.modRules.GetRulesForMod(id, bef, aft);
+
+    for (auto&& b : bef)
+    {
+        mgr.inst.modRules.RemoveRule(b, id);
+    }
+    for (auto&& a : aft)
+    {
+        mgr.inst.modRules.RemoveRule(id, a);
+    }
+
+    mgr.downloadSessions.erase(dl);
+
+    mgr.inst.modFileManifests.erase(i);
 }
 
 void InitMgr(ModMgr& mgr)

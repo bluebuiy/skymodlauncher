@@ -39,15 +39,32 @@ inline bool operator==(ModId const & a, ModId const & b)
     return a.id == b.id;
 }
 
+inline bool operator!=(ModId const & a, ModId const & b)
+{
+    return a.id != b.id;
+}
+
 inline bool operator==(ModInstallId const & a, ModInstallId const & b)
 {
     return a.id == b.id;
+}
+
+inline bool operator!=(ModInstallId const & a, ModInstallId const & b)
+{
+    return a.id != b.id;
 }
 
 inline bool operator==(ModDownloadId const & a, ModDownloadId const & b)
 {
     return a.id == b.id;
 }
+
+inline bool operator!=(ModDownloadId const & a, ModDownloadId const & b)
+{
+    return a.id != b.id;
+}
+
+
 
 template <>
 struct std::hash<ModId>

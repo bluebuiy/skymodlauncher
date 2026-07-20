@@ -9,10 +9,12 @@ char const * EnumStr(FileSource fs)
             return "CollBundle";
         case FileSource::Independent:
             return "DirectURL";
-        case FileSource::Manual:
+        case FileSource::Local:
             return "Local";
         case FileSource::Nexus:
             return "Nexus";
+        case FileSource::Empty:
+            return "Empty";
         case FileSource::Unknown:
             return "Unknown";
     }
