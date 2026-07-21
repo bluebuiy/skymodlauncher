@@ -93,6 +93,8 @@ target_sources(skymodlaunch
         src/asyncproc.cpp
         src/enums.h
         src/enums.cpp
+        src/fomod_backend.h
+        src/fomod_backend.cpp
 )
 
 target_link_libraries(skymodlaunch

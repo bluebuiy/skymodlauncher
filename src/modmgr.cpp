@@ -5,6 +5,7 @@
 #include "asyncproc.h"
 #include "procex.h"
 #include "quickdigest5/quickdigest5.hpp"
+#include "fomod_backend.h"
 
 #include <fstream>
 #include <iostream>
@@ -1869,25 +1870,24 @@ void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collectio
             // TODO check file status?
             auto actions = fomod::GetInstallActions(*fmopt, eval, ss);
 
+            bool ok = PerformFomodInstall(
+                *mgr,
+                modFileName,
+                installId,
+                actions,
+                realModRoot,
+                installDest
+            );
+
             // perform file actions
-            if (ApplyFomodFileActions(*mgr, actions, realModRoot, installDest))
+            if (ok)
             {
-                std::filesystem::path _dummy;
-                auto postInstallType = GuessInstallType(installDest, _dummy);
-                if (postInstallType == ModInstallType::Conflicting)
-                {
-                    std::cout << "!!!!!!!! Mod looks like it installed incorrectly: " << manifest->logicalName << std::endl;
-                    AddInstallMessage(*mgr, installId, "Appears to be installed incorrectly");
-                }
-                else
-                {
-                    iit->second.ok = true;
-                }
+                iit->second.ok = true;
             }
             else
             {
                 std::cout << "!!!!!!!! Fomod installed incorrectly, manual intervention required: " << manifest->logicalName << std::endl;
-                AddInstallMessage(*mgr, installId, "Fomod failed, manual intervention required");
+                AddInstallMessage(*mgr, installId, "Fomod failed or produced something that looks wrong, manual intervention required");
             }
         }
         else if (isFomod && !collection)
