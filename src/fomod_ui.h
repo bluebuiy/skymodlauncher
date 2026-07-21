@@ -32,6 +32,7 @@ struct FomodUI
     int hoveredOption = -1;
     bool openPopup = false;
     ModId modId;
+    ModInstallId installId;
 };
 
 bool InitFomod(ModMgr & mgr, std::filesystem::path const & tmpDir, std::filesystem::path const & realRoot, std::filesystem::path const & conf, std::filesystem::path const & installPrefix, std::string const & installDir, ModId const & id);

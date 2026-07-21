@@ -15,6 +15,8 @@ struct MountAction
     std::optional<std::string> upper;
 };
 
+ModExec const * FindExec(ModMgr& mgr, std::string const & name);
+
 std::optional<std::vector<MountAction>> GenerateMountActions(ModMgr & mgr);
 
 bool ApplyMountActions(std::vector<MountAction> const & actions);

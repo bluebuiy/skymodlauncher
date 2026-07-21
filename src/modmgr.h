@@ -58,7 +58,9 @@ struct ModExec
     std::string wd;
     // ie ~/.wine/GOG Games/Skyrim Anniversary Edition/skse64_launcher.exe
     std::vector<std::string> args;
-    bool updatePluginList = false;
+    bool updatePluginList = true;
+    // basically only true if it's loot
+    bool loadPluginListAfterExit = false;
 };
 
 struct ModPlugin
@@ -213,6 +215,7 @@ struct ModMgr
 
     bool addingExec = false;
     bool modifyingExec = false;
+    std::string oldExecName;
     bool selectingExec = false;
     bool enableRemove = false;
     int sortMode = 0;
@@ -316,7 +319,10 @@ void InitializeIndependentDownload(ModMgr& mgr, ModId id);
 
 void UpdateDownloads(ModMgr& mgr);
 
+
 void UninstallMod(ModMgr& mgr, ModId id);
+
+ModInstallType GuessInstallType(std::filesystem::path modContents, std::filesystem::path & outRoot);
 
 void InstallMod(ModMgr& mgr, ModId id, std::optional<NxmCollectionUrl> collection);
 

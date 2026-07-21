@@ -101,17 +101,6 @@ bool SetupPreMountEnv()
     return true;
 }
 
-/*
-    std::cout << "writing plugins" << std::endl;
-
-    auto pluginPath = std::filesystem::path(mgr.config.appData) / "Plugins.txt";
-    if (!WritePluginsTxt(mgr, pluginPath))
-    {
-        std::cout << "Failed to write plugins.txt" << std::endl;
-        return {};
-    }
-*/
-
 std::optional<std::vector<std::string>> BuildMountDataStr(ModMgr& mgr)
 {
     return {};
@@ -160,10 +149,10 @@ struct ToolRunner : ProcInvoke
     }
 };
 
-bool InvokeTool(ModMgr& mgr, std::string const & toolName)
+ModExec const * FindExec(ModMgr& mgr, std::string const & name)
 {
     auto toolIt = std::find_if(mgr.inst.customExec.begin(), mgr.inst.customExec.end(), [&](ModExec const & toolDef){
-        if (toolDef.execName == toolName)
+        if (toolDef.execName == name)
         {
             return true;
         }
@@ -173,7 +162,7 @@ bool InvokeTool(ModMgr& mgr, std::string const & toolName)
     if (toolIt == mgr.inst.customExec.end())
     {
         toolIt = std::find_if(mgr.inst.builtinExec.begin(), mgr.inst.builtinExec.end(), [&](ModExec const & toolDef){
-            if (toolDef.execName == toolName)
+            if (toolDef.execName == name)
             {
                 return true;
             }
@@ -181,14 +170,26 @@ bool InvokeTool(ModMgr& mgr, std::string const & toolName)
         });
         if (toolIt == mgr.inst.builtinExec.end())
         {
-            std::cout << "Failed to find tool " << toolName << std::endl;
-            return false;
+            std::cout << "Failed to find tool " << name << std::endl;
+            return nullptr;
         }
+    }
+
+    return &*toolIt;
+}
+
+bool InvokeTool(ModMgr& mgr, std::string const & toolName)
+{
+    ModExec const * exec = FindExec(mgr, toolName);
+
+    if (exec == nullptr)
+    {
+        return false;
     }
 
     std::cout << "Found tool" << std::endl;
     
-    auto toolDef = *toolIt;
+    auto toolDef = *exec;
 
     std::string installRoot;
     if (auto o = WordExpand(shellFix(mgr.config.installRoot)))
@@ -386,10 +387,14 @@ std::optional<std::vector<MountAction>> GenerateMountActions(ModMgr& mgr)
     {
         auto& ma = mountActions.emplace_back();
 
-        for (int i = 0; i < 128 && modIndex < installList.size(); ++i, ++modIndex)
+        for (int i = 0; i < 128 && modIndex < installList.size(); ++modIndex)
         {
             int index = installList.size() - modIndex - 1;
-            ma.lower.emplace_back(modDir / mgr.inst.modInstalls[installList[index]].installDir);
+            if (mgr.inst.modInstalls[installList[index]].enabled)
+            {
+                ma.lower.emplace_back(modDir / mgr.inst.modInstalls[installList[index]].installDir);
+                ++i;
+            }
         }
         
         ma.mountPoint = mgr.config.projectDir / ".fs" / std::format("m{}", leafIndex);

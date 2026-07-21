@@ -309,6 +309,7 @@ void RenderTools(ModMgr& mgr)
             {
                 found = true;
                 mgr.newExec = mgr.inst.customExec[i];
+                mgr.oldExecName = mgr.inst.customExec[i].execName;
                 break;
             }
         }
@@ -318,8 +319,8 @@ void RenderTools(ModMgr& mgr)
     if (mgr.addingExec || mgr.modifyingExec)
     {
         const auto dispSize = ImGui::GetIO().DisplaySize;
-        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetWorkCenter(), ImGuiCond_FirstUseEver, ImVec2(0.5f, 0.5f));
-        ImGui::SetNextWindowSize(ImVec2(300, 300), ImGuiCond_Always);
+        ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetWorkCenter(), ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+        ImGui::SetNextWindowSize(ImVec2(400, 600), ImGuiCond_Appearing);
         if (ImGui::Begin("Edit Exec"))
         {
             ImGui::Text("Name ");
@@ -336,6 +337,9 @@ void RenderTools(ModMgr& mgr)
             }
             ImGui::SameLine();
             ImGui::InputText("##Wd", &mgr.newExec.wd);
+            ImGui::Text("Update plugins.txt");
+            ImGui::SameLine();
+            ImGui::Checkbox("##plugintxt", &mgr.newExec.updatePluginList);
             ImGui::Text("Arguments:");
             int del = -1;
             for (int i = 0; i < mgr.newExec.args.size(); ++i)
@@ -365,11 +369,27 @@ void RenderTools(ModMgr& mgr)
                 int index = -1;
                 for (int i = 0; i < mgr.inst.customExec.size(); ++i)
                 {
-                    if (mgr.inst.customExec[i].execName == mgr.newExec.execName)
+                    if (mgr.addingExec)
                     {
-                        dup = true;
-                        index = i;
-                        break;
+                        if (mgr.inst.customExec[i].execName == mgr.newExec.execName)
+                        {
+                            dup = true;
+                            index = i;
+                            break;
+                        }
+                    }
+                    else if (mgr.modifyingExec)
+                    {
+                        if (mgr.inst.customExec[i].execName == mgr.oldExecName)
+                        {
+                            index = i;
+                            break;
+                        }
+                        else if (mgr.inst.customExec[i].execName == mgr.newExec.execName)
+                        {
+                            index = i;
+                            dup = true;
+                        }
                     }
                 }
 
@@ -380,19 +400,24 @@ void RenderTools(ModMgr& mgr)
                         dup = true;
                     }
                 }
-                if (mgr.modifyingExec)
+                if (!dup)
                 {
-                    mgr.inst.customExec[index] = mgr.newExec;
-                    mgr.newExec = ModExec{};
-                    mgr.addingExec = false;
-                    mgr.modifyingExec = false;
-                }
-                else if (!dup && mgr.addingExec)
-                {
-                    mgr.inst.customExec.push_back(mgr.newExec);
-                    mgr.newExec = ModExec{};
-                    mgr.addingExec = false;
-                    mgr.modifyingExec = false;
+                    if (mgr.modifyingExec && index != -1)
+                    {
+                        mgr.inst.customExec[index] = mgr.newExec;
+                        mgr.newExec = ModExec{};
+                        mgr.addingExec = false;
+                        mgr.modifyingExec = false;
+                        mgr.oldExecName = "";
+                    }
+                    else if (mgr.addingExec)
+                    {
+                        mgr.inst.customExec.push_back(mgr.newExec);
+                        mgr.newExec = ModExec{};
+                        mgr.addingExec = false;
+                        mgr.modifyingExec = false;
+                        mgr.oldExecName = "";
+                    }
                 }
             }
             ImGui::SameLine(0, 15);
@@ -400,6 +425,7 @@ void RenderTools(ModMgr& mgr)
             {
                 mgr.addingExec = false;
                 mgr.modifyingExec = false;
+                mgr.oldExecName = "";
                 mgr.newExec = ModExec{};
             }
         }

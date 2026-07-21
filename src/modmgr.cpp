@@ -3,6 +3,7 @@
 #include "fomod_ui.h"
 #include "nxmurl.h"
 #include "asyncproc.h"
+#include "procex.h"
 #include "quickdigest5/quickdigest5.hpp"
 
 #include <fstream>
@@ -47,6 +48,48 @@ bool WritePluginsTxt(ModMgr& mgr, std::filesystem::path const & path)
     return true;
 }
 
+bool LoadPluginsTxt(ModMgr& mgr, std::filesystem::path const & path)
+{
+    std::vector<std::string> orderedPluginList;
+
+    std::ifstream stream(path);
+    if (!stream)
+    {
+        return false;
+    }
+
+    std::regex m("^\\*(.*)$");
+
+    while (stream)
+    {
+        std::smatch mr;
+        std::string str;
+        std::getline(stream, str);
+        if (std::regex_match(str, mr, m))
+        {
+            orderedPluginList.push_back(mr[1].str());
+        }
+    }
+
+    mgr.inst.pluginList.clear();
+
+    for (auto&& p : orderedPluginList)
+    {
+        mgr.inst.pluginList.push_back({p, true});
+    }
+
+    return true;
+}
+
+bool TimespecCompLess(timespec const & a, timespec const & b)
+{
+    if (b.tv_sec > a.tv_sec)
+    {
+        return false;
+    }
+    return a.tv_nsec < b.tv_nsec;
+}
+
 void LaunchExec(ModMgr& mgr, std::string const & execName)
 {
     std::string confPath;
@@ -59,10 +102,37 @@ void LaunchExec(ModMgr& mgr, std::string const & execName)
         std::cout << "Failed to resolve config path" << std::endl;
         return;
     }
+
+    ModExec const * exec = FindExec(mgr, execName);
+    if (!exec)
+    {
+        return;
+    }
+
+    struct stat st;
+
+    std::filesystem::path pluginFile = std::filesystem::path(mgr.config.appData) / "Plugins.txt";
+    int sr = 0;
+
+    if (exec->loadPluginListAfterExit)
+    {
+        sr = stat(pluginFile.c_str(), &st);
+    }
+
     std::vector<std::string> launchArgs = {"-c", confPath, "-e", execName};
     ExecToolProgram ex;
     ex.args = launchArgs;
     ForkInvoke(&ex);
+
+    if (exec->loadPluginListAfterExit)
+    {
+        struct stat st2;
+        int sr2 = stat(pluginFile.c_str(), &st2);
+        if (sr != 0 || sr2 == 0 && TimespecCompLess(st.st_mtim, st2.st_mtim))
+        {
+            LoadPluginsTxt(mgr, pluginFile);
+        }
+    }
 }
 
 void DiscoverPlugins(ModMgr& mgr)
@@ -261,8 +331,14 @@ void LoadBuiltinTools(ModMgr& mgr)
     ModExec& skse = mgr.inst.builtinExec.emplace_back();
     skse.execName = "skse";
     skse.execPath = "${WINE_CMD}";
-    
     skse.args = {sksePath};
+
+    ModExec& loot = mgr.inst.builtinExec.emplace_back();
+    loot.execName = "loot";
+    loot.execPath = "${WINE_CMD}";
+    loot.args = {std::string("${APP_DATA}/../Programs/LOOT/LOOT.exe")};
+    loot.loadPluginListAfterExit = true;
+    loot.updatePluginList = true;
 }
 
 void CorrectLoadIndexes(ModMgr& mgr)
@@ -538,11 +614,11 @@ std::optional<std::string> ReplaceEnvVariables(ModMgr& mgr, std::string const & 
 {
     std::unordered_map<std::string, std::string> varMap;
     varMap.emplace("GAME_ROOT_DIR", mgr.config.installRoot);
-    varMap.emplace("PLUGINTXT_DIR", mgr.config.appData);
     varMap.emplace("INI_DIR", mgr.config.mgRoot);
     varMap.emplace("OVERWRITE_DIR", std::filesystem::path(mgr.config.projectDir) / "overwrite");
     varMap.emplace("PROJECT_DIR", mgr.config.projectDir);
     varMap.emplace("WINE_CMD", "/usr/bin/wine");
+    varMap.emplace("APP_DATA", mgr.config.appData);
 
     // duplicates get ignored!
     for (auto&& cv : mgr.inst.customVariables)

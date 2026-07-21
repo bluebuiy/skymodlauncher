@@ -24,6 +24,18 @@ bool InitFomod(
         return false;
     }
 
+    auto mf = mgr.inst.modFileManifests.find(modFile);
+    if (mf == mgr.inst.modFileManifests.end())
+    {
+        std::cout << "Invalid mod id" << std::endl;
+        return false;
+    }
+    if (mf->second.installInstances.empty())
+    {
+        std::cout << "Mod is not installing" << std::endl;
+        return false;
+    }
+
     std::filesystem::path fomdPath = fomodConf;
 
     auto downloadData = std::find_if(mgr.downloadSessions.begin(), mgr.downloadSessions.end(), [&](ModDownloadRt const & m){
@@ -56,6 +68,7 @@ bool InitFomod(
     mgr.fomodState->name = std::filesystem::path(downloadData->fileName).stem();
     mgr.fomodState->openPopup = true;
     mgr.fomodState->modId = modFile;
+    mgr.fomodState->installId = mf->second.installInstances[0];
     mgr.fomodState->installDir = installDir;
 
     return true;
@@ -263,29 +276,86 @@ void RenderFomod(ModMgr& mgr)
     }
     else if (doInstall)
     {
-        bool ok = ApplyFomodFileActions(mgr, fomod.fileActions, mgr.config.projectDir / fomod.realRoot, fomod.installPrefix);
-
-
-        auto mf = GetModManifest(mgr, mgr.fomodState->modId);
-        if (!mf)
         {
-            std::cout << "Manifest disappeared!" << std::endl;
-        }
-        
-        auto inst = mgr.inst.modInstalls.find(mf->installInstances.empty() ? ModInstallId{0} : mf->installInstances[0]);
-        if (inst != mgr.inst.modInstalls.end())
-        {
-            if (ok)
+            std::filesystem::path fomodIntermediate = mgr.config.projectDir / ".mod_staging" / "fomodtmp" / fomod.installDir;
+
+            if (std::filesystem::is_directory(fomodIntermediate))
             {
-                inst->second.ok = true;
+                std::vector<std::string> clearTmp = {
+                    "/usr/bin/rm", "-f", "-r", fomodIntermediate
+                };
+                if (!LaunchProc(clearTmp, "/"))
+                {
+                    std::cout << "Failed to remove previous fomod staging directory" << std::endl;
+                }
             }
-        }
-        else
-        {
-            std::cout << "Install disappeared!" << std::endl;
+            // install to the temporary directory
+            bool ok = ApplyFomodFileActions(mgr, fomod.fileActions, mgr.config.projectDir / fomod.realRoot, fomodIntermediate);
+
+            if (!ok)
+            {
+                std::cout << "Failed to install into temporary directory" << std::endl;
+                AddInstallMessage(mgr, fomod.installId, "Failed to install into temporary directory");
+                goto fomodcleanup;
+            }
+
+            std::filesystem::path guessedRoot = fomodIntermediate;
+            ModInstallType installType = GuessInstallType(fomodIntermediate, guessedRoot);
+            if (guessedRoot != fomodIntermediate)
+            {
+                std::cout << "Guessed mod root is not the install root" << std::endl;
+                AddInstallMessage(mgr, fomod.installId, "Guessed mod root is not the install root");
+                ok = false;
+            }
+
+            if (installType == ModInstallType::Conflicting)
+            {
+                std::cout << "Fomod created a mod that looks wrong" << std::endl;
+                AddInstallMessage(mgr, fomod.installId, "Fomod created a mod that looks wrong");
+                ok = false;
+            }
+
+            std::filesystem::path destination = fomod.installPrefix;
+            if (installType == ModInstallType::Data)
+            {
+                destination = destination / "Data";
+            }
+
+            // move tmp install dir to actual install dir
+            std::vector<std::string> installCmd = {
+                "/usr/bin/mv",
+                "-T",
+                fomodIntermediate,
+                destination
+            };
+
+            if (!LaunchProc(installCmd, "/"))
+            {
+                std::cout << "Failed to move staged fomod to install destination" << std::endl;
+                AddInstallMessage(mgr, fomod.installId, "Failed to move staged fomod to install destination");
+                ok = false;
+            }
+
+            //bool ok = ApplyFomodFileActions(mgr, fomod.fileActions, mgr.config.projectDir / fomod.realRoot, fomod.installPrefix);
+
+            auto inst = mgr.inst.modInstalls.find(fomod.installId);
+            if (inst != mgr.inst.modInstalls.end())
+            {
+                if (ok)
+                {
+                    inst->second.ok = true;
+                }
+            }
+            else
+            {
+                std::cout << "Install disappeared!" << std::endl;
+            }
+
+            DiscoverPlugins(mgr);
+
         }
 
-        DiscoverPlugins(mgr);
+    fomodcleanup:
 
         // remove staging
         std::vector<std::string> rmCmd = {
